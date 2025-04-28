@@ -20,7 +20,7 @@
 
 int device;
 
-const char target_mac[] = "FC:49:49:27:11:81";
+const char target_mac[] = "EE:93:96:3C:66:B5";
 // const char target_mac[] = "FA:F0:07:00:D8:E0";
 
 
@@ -118,7 +118,7 @@ void enable_scanning(int device)
     // Set BLE scan parameters
     le_set_scan_parameters_cp scan_params_cp;
 	memset(&scan_params_cp, 0, sizeof(scan_params_cp));
-	scan_params_cp.type 			= 0x00;
+	scan_params_cp.type 			= 0x01;
 	scan_params_cp.interval 		= htobs(0x0030);
 	scan_params_cp.window 			= htobs(0x0030);
 	scan_params_cp.own_bdaddr_type 	= 0x00; // Public Device Address (default).
@@ -182,7 +182,7 @@ void disable_scanning(int device)
     // Enable scanning
     le_set_scan_enable_cp scan_cp;
 	memset(&scan_cp, 0, sizeof(scan_cp));
-	scan_cp.enable 		= 0x00;	// Enable flag.
+	scan_cp.enable = 0x00;	// Enable flag.
 
 	struct hci_request enable_adv_rq = ble_hci_request(OCF_LE_SET_SCAN_ENABLE, LE_SET_SCAN_ENABLE_CP_SIZE, &status, &scan_cp);
 
@@ -250,9 +250,6 @@ void scan_for_advertisements(int device, int duration, int reset)
 												  			(info->data[i+2] << 16) |
 												  			(info->data[i+3] << 24)) / 100.0f; 
 								printf(" Pres:%.2f", pressure); 
-							}else if (i == 24){
-								int button_value = (uint8_t)(info->data[i]);
-								printf(" Button: %d", button_value); 
 							}
 						}
 						printf("\n");
@@ -303,13 +300,13 @@ int main()
         set_advertising_data(device, 12);
         enable_advertising(device, 1); 
 
-        // sleep(30);
+        sleep(30);
 
-        // enable_advertising(device, 0);
+        enable_advertising(device, 0);
 
         enable_scanning(device);
 
-        scan_for_advertisements(device, 30, 0); 
+        scan_for_advertisements(device, 50, 0); 
     }
 
     hci_close_dev(device);
