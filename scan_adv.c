@@ -433,6 +433,9 @@ int main()
         // --- Periodic Advertising Burst ---
         if (!is_advertising && (now >= last_adv_time + next_adv_interval)) {
             // printf("AP: [%s] Triggering advertising burst...\n", ctime(&now)); // Can be noisy
+			int interval_for_following_burst = BASE_ADV_INTERVAL_S + (rand() % (JITTER_S + 1));
+			uint16_t time_to_next_burst_s = (uint16_t)interval_for_following_burst; 
+			
 
             if (is_scanning) { // Stop scan before advertising
                 if (set_scan_enable(device, false, true) == 0) {
@@ -454,7 +457,7 @@ int main()
 
         // --- Continuous Scanning (if not advertising) ---
         if (!is_scanning && !is_advertising) {
-             if (set_scan_enable(device, true, true) == 0) { // Enable scan, filter duplicates
+             if (set_scan_enable(device, true, false) == 0) { // Enable scan, filter duplicates
                 is_scanning = true;
              } else { fprintf(stderr, "AP: Error: Failed scan enable! Retrying.\n"); sleep(5); continue; }
         }
