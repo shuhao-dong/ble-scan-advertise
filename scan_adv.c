@@ -35,7 +35,7 @@ const char target_mac[] = "EE:93:96:3C:66:B5"; // REPLACE WITH YOUR BORUS DEVICE
 
 // Periodic Advertising (AP Heartbeat) Configuration
 #define BASE_ADV_INTERVAL_S 60  // Base interval for AP advertising bursts (seconds)
-#define JITTER_S 15             // Max random jitter to add (0-15 seconds)
+#define JITTER_S 5             // Max random jitter to add (0-15 seconds)
 #define ADV_BURST_DURATION_MS 500 // How long AP advertises each time (milliseconds)
 // Company ID used in AP's Manufacturer Data (Example: 0xACDC)
 #define AP_COMPANY_ID_LSB 0xDC
@@ -412,6 +412,7 @@ int main()
                 if (set_scan_enable(device, false, false) == 0) { is_scanning = false; usleep(20000); }
                 else { fprintf(stderr, "AP: Warn - Failed to disable scan\n"); }
             }
+
 
             if (set_advertising_data(device, time_to_next_burst_s) == 0) { // Set data *first*
                 if (set_advertise_enable(device, true) == 0) { // Start burst
