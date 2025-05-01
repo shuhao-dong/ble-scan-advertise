@@ -471,8 +471,9 @@ void process_scan_packet(uint8_t *buf, int len)
                                     uint8_t encoded_temp = plaintext[pt_offset++];
                                     int temp_c = (int)encoded_temp - TEMPERATURE_LOW_LIMIT;
 
-                                    uint16_t pressure_offset = plaintext[pt_offset] | (plaintext[pt_offset + 1] << 8);
-                                    pt_offset += 2;
+                                    uint16_t pressure_offset;
+                                    memcpy(&pressure_offset, &plaintext[pt_offset], sizeof(pressure_offset)); 
+                                    pt_offset += sizeof(pressure_offset);
                                     uint16_t pressure_x10hpa = pressure_offset + PRESSURE_BASE_HPA_X10;
                                     float pressure_hpa = (float)pressure_x10hpa / 10.0f;
 
@@ -481,17 +482,14 @@ void process_scan_packet(uint8_t *buf, int len)
                                     
                                     for (int i = 0; i < 6; i++)
                                     {
-                                        imu[i] = (int16_t)(plaintext[pt_offset] | (plaintext[pt_offset + 1] << 8)); 
+                                        memcpy(&imu[i], &plaintext[pt_offset], sizeof(imu[i])); 
+                                        pt_offset += sizeof(imu[i]); 
                                         imu_scaled[i] = (float)imu[i] / 100.0f;
-                                        pt_offset += 2; 
                                     }
                                     
-                                    uint32_t ts = plaintext[pt_offset] | 
-                                            (plaintext[pt_offset + 1] << 8) | 
-                                            (plaintext[pt_offset + 2] << 16) | 
-                                            (plaintext[pt_offset + 3] << 24);
-
-                                    pt_offset += 4;
+                                    uint32_t ts;
+                                    memcpy(&ts, &plaintext[pt_offset], sizeof(ts));
+                                    pt_offset += sizeof(ts);
 
                                     uint8_t batt_pct = plaintext[pt_offset++];
 
