@@ -40,6 +40,7 @@ const char target_mac[] = "EE:93:96:3C:66:B5"; // REPLACE WITH YOUR BORUS DEVICE
 #define JITTER_S 5                // Max random jitter to add (0-15 seconds)
 #define ADV_BURST_DURATION_MS 500 // How long AP advertises each time (milliseconds)
 #define BORUS_COMPANY_ID 0x0059   // Expected Company ID in BORUS packet nonce
+#define TIME_FIELD_UNIT_MS 100
 
 // Wearable Packet Type Configuration
 #define SENSOR_ADV_PAYLOAD_TYPE 0x00
@@ -124,7 +125,7 @@ int set_advertising_parameters(int dev)
 /**
  * @brief Sets LE Advertising Data for AP's heartbeat, including time until next burst.
  */
-int set_ap_heartbeat_data(int dev, uint16_t time_to_next_regular_s)
+int set_ap_heartbeat_data(int dev, uint16_t time_to_next_cs)
 {
     le_set_advertising_data_cp adv_data_cp;
     memset(&adv_data_cp, 0, sizeof(adv_data_cp));
@@ -137,8 +138,8 @@ int set_ap_heartbeat_data(int dev, uint16_t time_to_next_regular_s)
     adv_data_cp.data[index++] = 0x59;
     adv_data_cp.data[index++] = 0x00;
     // Encode time as Little Endian uint16_t
-    adv_data_cp.data[index++] = (uint8_t)(time_to_next_regular_s & 0xFF);        // Time LSB
-    adv_data_cp.data[index++] = (uint8_t)((time_to_next_regular_s >> 8) & 0xFF); // Time MSB
+    adv_data_cp.data[index++] = (uint8_t)(time_to_next_cs & 0xFF);        // Time LSB
+    adv_data_cp.data[index++] = (uint8_t)((time_to_next_cs >> 8) & 0xFF); // Time MSB
 
     adv_data_cp.length = index; // Total length of all AD structures included
 
@@ -462,7 +463,7 @@ void process_scan_packet(uint8_t *buf, int len)
                                 uint8_t *ciphertext = actual_payload + NONCE_LEN; // Next 20 bytes
                                 uint8_t plaintext[SENSOR_DATA_PACKET_SIZE];
 
-                                printf("%s AP: Received Sensor Packet (Type 0x00) with CID 0x%06X\n", timestamp_str, cid);
+                                printf("%s AP: Received Sensor Packet (Type 0x00) with CID 0x%04X\n", timestamp_str, cid);
 
                                 if (decrypt_sensor_block_ap(aes_key, nonce, ciphertext, plaintext) == 0)
                                 {
@@ -571,6 +572,27 @@ void process_scan_packet(uint8_t *buf, int len)
         offset = info->data + info->length + 1; // Move to next report
     } // end while(reports_count --)
     next_report :;
+}
+
+static uint16_t calc_time_to_next_cs(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL); 
+
+    uint64_t now_us = (uint64_t)tv.tv_sec * 1000000ULL + tv.tv_usec;
+    uint64_t next_us = (uint64_t)next_regular_burst_epoch * 1000000ULL; 
+
+    if (next_us <= now_us){
+        return 0;
+    }
+
+    uint64_t delta_cs = (next_us - now_us + 9999ULL) / 10000ULL;
+
+    if (delta_cs > 0xFFFF){
+        delta_cs = 0xFFFF;
+    }
+
+    return (uint16_t)delta_cs;
 }
 
 // --- Main Function ---
