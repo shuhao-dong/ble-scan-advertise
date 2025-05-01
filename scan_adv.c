@@ -462,44 +462,40 @@ void process_scan_packet(uint8_t *buf, int len)
                                 uint8_t *ciphertext = actual_payload + NONCE_LEN; // Next 20 bytes
                                 uint8_t plaintext[SENSOR_DATA_PACKET_SIZE];
 
-                                printf("%s AP: Received Sensor Packet (Type 0x00)\n", timestamp_str);
+                                printf("%s AP: Received Sensor Packet (Type 0x00) with CID 0x%06X\n", timestamp_str, cid);
 
                                 if (decrypt_sensor_block_ap(aes_key, nonce, ciphertext, plaintext) == 0)
                                 {
                                     // --- Parse Plaintext ---
                                     int pt_offset = 0;
-
-                                    // Temperature (1 byte)
                                     uint8_t encoded_temp = plaintext[pt_offset++];
                                     int temp_c = (int)encoded_temp - TEMPERATURE_LOW_LIMIT;
 
-                                    // Pressure (2 bytes LE)
                                     uint16_t pressure_offset = plaintext[pt_offset] | (plaintext[pt_offset + 1] << 8);
                                     pt_offset += 2;
                                     uint16_t pressure_x10hpa = pressure_offset + PRESSURE_BASE_HPA_X10;
-                                    float pressure_hpa = (float)pressure_x10hpa / 10.0f; 
-                                    
-                                    // IMU (12 bytes)
-                                    int16_t imu_raw[6];
-                                    memcpy(imu_raw, &plaintext[pt_offset], sizeof(imu_raw));
-                                    pt_offset += sizeof(imu_raw);
+                                    float pressure_hpa = (float)pressure_x10hpa / 10.0f;
+
+                                    int16_t imu[6];
                                     float imu_scaled[6];
+                                    
                                     for (int i = 0; i < 6; i++)
                                     {
-                                        imu_scaled[i] = (float)imu_raw[i] / 100.0f;
+                                        imu[i] = (int16_t)(plaintext[pt_offset] | (plaintext[pt_offset + 1] << 8)); 
+                                        imu_scaled[i] = (float)imu[i] / 100.0f;
+                                        pt_offset += 2; 
                                     }
                                     
-                                    // Timestamp (4 bytes LE)
                                     uint32_t ts = plaintext[pt_offset] | 
-                                                    (plaintext[pt_offset + 1] << 8) | 
-                                                    (plaintext[pt_offset + 2] << 16) |
-                                                    (plaintext[pt_offset + 3] << 24); 
+                                            (plaintext[pt_offset + 1] << 8) | 
+                                            (plaintext[pt_offset + 2] << 16) | 
+                                            (plaintext[pt_offset + 3] << 24);
+
                                     pt_offset += 4;
-                                    
-                                    // Battery (1 byte)
+
                                     uint8_t batt_pct = plaintext[pt_offset++];
 
-                                    printf("AP: DECRYPTED -> Temp:%dC Pres:%.1fhPa Batt:%u%% TS:%u IMU:[%d,%d,%d,%d,%d,%d]\n",
+                                    printf("AP: DECRYPTED -> Temp:%dC Pres:%.1fhPa Batt:%u%% TS:%u IMU:[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]\n",
                                            temp_c, pressure_hpa, batt_pct, ts,
                                            imu_scaled[0], imu_scaled[1], imu_scaled[2], imu_scaled[3], imu_scaled[4], imu_scaled[5]);
                                     fflush(stdout);
