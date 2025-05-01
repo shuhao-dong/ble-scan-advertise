@@ -677,9 +677,9 @@ int main()
             // Calculate time until next regularly scheduled burst for the payload
             current_regular_interval_s = BASE_ADV_INTERVAL_S + (rand() % (JITTER_S + 1));
             next_regular_burst_epoch = time(NULL) + current_regular_interval_s; // Update regular schedule
-            uint16_t time_to_next_s = (uint16_t)current_regular_interval_s;     // For ADV payload
+            uint16_t time_to_next_cs = calc_time_to_next_cs();     // For ADV payload
 
-            printf("AP: [%s] Triggering AP Heartbeat burst. Next regular burst in %u s\n", ctime(&now_main), time_to_next_s);
+            printf("AP: [%s] Triggering AP Heartbeat burst. Next regular burst in %u cs (%.1f s)\n", ctime(&now_main), time_to_next_cs, time_to_next_cs / 10.0f);
 
             // --- Perform Burst ---
             if (is_scanning)
@@ -695,7 +695,7 @@ int main()
                 }
             }
 
-            if (set_ap_heartbeat_data(device, time_to_next_s) == 0)
+            if (set_ap_heartbeat_data(device, time_to_next_cs) == 0)
             {
                 if (set_advertise_enable(device, true) == 0)
                 {
