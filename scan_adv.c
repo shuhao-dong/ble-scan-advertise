@@ -468,25 +468,40 @@ void process_scan_packet(uint8_t *buf, int len)
                                 {
                                     // --- Parse Plaintext ---
                                     int pt_offset = 0;
+
+                                    // Temperature (1 byte)
                                     uint8_t encoded_temp = plaintext[pt_offset++];
                                     int temp_c = (int)encoded_temp - TEMPERATURE_LOW_LIMIT;
 
+                                    // Pressure (2 bytes LE)
                                     uint16_t pressure_offset = plaintext[pt_offset] | (plaintext[pt_offset + 1] << 8);
                                     pt_offset += 2;
                                     uint16_t pressure_x10hpa = pressure_offset + PRESSURE_BASE_HPA_X10;
-
-                                    int16_t imu[6];
-                                    memcpy(imu, &plaintext[pt_offset], sizeof(imu));
-                                    pt_offset += sizeof(imu);
-
-                                    uint32_t ts = plaintext[pt_offset] | (plaintext[pt_offset + 1] << 8) | (plaintext[pt_offset + 2] << 16) | (plaintext[pt_offset + 3] << 24);
+                                    float pressure_hpa = (float)pressure_x10hpa / 10.0f; 
+                                    
+                                    // IMU (12 bytes)
+                                    int16_t imu_raw[6];
+                                    memcpy(imu_raw, &plaintext[pt_offset], sizeof(imu_raw));
+                                    pt_offset += sizeof(imu_raw);
+                                    float imu_scaled[6];
+                                    for (int i = 0; i < 6; i++)
+                                    {
+                                        imu_scaled[i] = (float)imu_raw[i] / 100.0f;
+                                    }
+                                    
+                                    // Timestamp (4 bytes LE)
+                                    uint32_t ts = plaintext[pt_offset] | 
+                                                    (plaintext[pt_offset + 1] << 8) | 
+                                                    (plaintext[pt_offset + 2] << 16) |
+                                                    (plaintext[pt_offset + 3] << 24); 
                                     pt_offset += 4;
-
+                                    
+                                    // Battery (1 byte)
                                     uint8_t batt_pct = plaintext[pt_offset++];
 
                                     printf("AP: DECRYPTED -> Temp:%dC Pres:%.1fhPa Batt:%u%% TS:%u IMU:[%d,%d,%d,%d,%d,%d]\n",
-                                           temp_c, (float)pressure_x10hpa / 10.0, batt_pct, ts,
-                                           imu[0], imu[1], imu[2], imu[3], imu[4], imu[5]);
+                                           temp_c, pressure_hpa, batt_pct, ts,
+                                           imu_scaled[0], imu_scaled[1], imu_scaled[2], imu_scaled[3], imu_scaled[4], imu_scaled[5]);
                                     fflush(stdout);
 
                                     // Assume wearable is HOME, revert to regular AP burst schedule
