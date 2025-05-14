@@ -40,7 +40,7 @@ const char target_mac[] = "EE:93:96:3C:66:B5"; // REPLACE WITH YOUR BORUS DEVICE
 #define JITTER_S 5                // Max random jitter to add (0-15 seconds)
 #define ADV_BURST_DURATION_MS 500 // How long AP advertises each time (milliseconds)
 #define BORUS_COMPANY_ID 0x0059   // Expected Company ID in BORUS packet nonce
-#define TIME_FIELD_UNIT_MS 100
+#define TIME_FIELD_UNIT_MS 10
 
 // Wearable Packet Type Configuration
 #define SENSOR_ADV_PAYLOAD_TYPE 0x00
@@ -50,11 +50,11 @@ const char target_mac[] = "EE:93:96:3C:66:B5"; // REPLACE WITH YOUR BORUS DEVICE
 #define SENSOR_DATA_PACKET_SIZE 20                                    // Plaintext size from BORUS
 #define NONCE_LEN 8                                                   // Nonce size from BORUS
 #define SENSOR_PAYLOAD_DATA_LEN (NONCE_LEN + SENSOR_DATA_PACKET_SIZE) // =28
-#define AWAY_PAYLOAD_DATA_LEN 2
+#define SYNC_REQ_PAYLOAD_DATA_LEN 2
 
 // Total Manufacturer Data Length (including Type byte)
 #define SENSOR_MANUF_PAYLOAD_LEN (1 + SENSOR_PAYLOAD_DATA_LEN) // =29
-#define AWAY_MANUF_PAYLOAD_LEN (1 + AWAY_PAYLOAD_DATA_LEN)     // =3
+#define AWAY_MANUF_PAYLOAD_LEN (1 + SYNC_REQ_PAYLOAD_DATA_LEN)     // =3
 
 // !!! IMPORTANT: Use the EXACT SAME KEY as on the BORUS device !!!
 const unsigned char aes_key[16] = {
@@ -350,13 +350,9 @@ uint16_t calculate_time_to_net_regular_burst()
     }
 
     time_t delta = next_regular_burst_epoch - now;
+    uint64_t delta_cs = (uint64_t)delta * 1000 / TIME_FIELD_UNIT_MS;
 
-    if (delta > UINT16_MAX)
-    {
-        return UINT16_MAX;
-    }
-
-    return (uint16_t)delta;
+    return (delta_cs > UINT16_MAX) ? UINT16_MAX : (uint16_t)delta_cs; 
 }
 
 // --- Packet Processing Function ---
@@ -499,38 +495,15 @@ void process_scan_packet(uint8_t *buf, int len)
                                            imu_scaled[0], imu_scaled[1], imu_scaled[2], imu_scaled[3], imu_scaled[4], imu_scaled[5]);
                                     fflush(stdout);
 
-                                    // Assume wearable is HOME, revert to regular AP burst schedule
-                                    trigger_ap_burst_now = 0; // Clear any dynamic trigger
                                     schedule_ap_burst(0, 0);  // Cancel one-shot timer
-
-                                    // Calculate when the next regular burst should be
-                                    time_t now = time(NULL);
-                                    long remaining_sec = 0;
-                                    long remaining_usec = 0;
-
-                                    if (next_regular_burst_epoch <= now)
-                                    {
-                                        printf("AP: Sensor packet Rcvd - Regular burst was due. Recalculating\n");
-                                        int interval = BASE_ADV_INTERVAL_S + (rand() % (JITTER_S + 1));
-                                        next_regular_burst_epoch = now + interval;
-                                        remaining_sec = interval;
-                                    } else {
-                                        remaining_sec = next_regular_burst_epoch - now; 
-                                    }
-                                    
-
-                                    // Schedule next regular burst
-                                    printf("AP: Sensor packet received, regular AP burst in %ld seconds\n", remaining_sec);
-                                    schedule_ap_burst(remaining_sec, 0); 
                                 }
-
                                 goto next_report;
                             }
-                            else if (packet_type == AWAY_ADV_PAYLOAD_TYPE && actual_payload_len == AWAY_PAYLOAD_DATA_LEN)
+                            else if (packet_type == AWAY_ADV_PAYLOAD_TYPE && actual_payload_len == SYNC_REQ_PAYLOAD_DATA_LEN)
                             {
                                 // --- Type 0x01: Away Announce ---
                                 uint16_t announced_scan_delay_s = actual_payload[0] | (actual_payload[1] << 8);
-                                printf("%s AP: Received Away Announce (Type 0x01). Scan in %u s\n", timestamp_str, announced_scan_delay_s);
+                                printf("AP: Received Sync Request (Type 0x01) from %s. Wearable scans in %u s\n", addr, announced_scan_delay_s);
 
                                 // Calculate when to send our AP burst
                                 struct timeval tv_trigger;
@@ -707,6 +680,7 @@ int main()
                 else
                 {
                     fprintf(stderr, "AP: Warn - Failed to start advertising\n");
+                    is_advertising = false; 
                 }
             }
             else
@@ -720,7 +694,7 @@ int main()
 
             // Resume Scanning
             usleep(50000);
-            if (!is_scanning)
+            if (!is_scanning && !is_advertising)
             {
                 if (set_scan_enable(device, true, false) == 0)
                 {
