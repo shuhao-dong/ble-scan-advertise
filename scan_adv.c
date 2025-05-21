@@ -1,16 +1,14 @@
-// Copyright (c) 2021 David G. Young
-// Copyright (c) 2015 Damian Kołakowski. All rights reserved.
+/*  scan_adv_ext.c
+ *
+ *  Raspberry Pi + nRF52840 USB-dongle
+ *  ─────────────────────────────────
+ *  • Passive **extended** scanner for BORUS wearable
+ *  • Periodic heartbeat broadcaster (legacy PDU via ext-adv cmds)
+ *
+ *  Compile:  gcc scan_adv_ext.c -o scan_adv_ext -lbluetooth -lssl -lcrypto
+ */
 
-// Compile with:
-// cc scan_adv.c -o scan_adv -lbluetooth -lssl -lcrypto
-
-// Modified by: Shuhao Dong
-// Implements:
-// - Periodic Advertising (AP Heartbeat) with Jitter
-// - Includes time until next AP burst in ADV packet for negotiation
-// - Scanning for BORUS device advertisements
-// - Decryption of BORUS sensor data payload
-
+#define _GNU_SOURCE
 #include <stdlib.h>
 #include <errno.h>
 #include <unistd.h>
@@ -31,745 +29,575 @@
 #include <openssl/err.h>
 #include <openssl/aes.h>
 
-// --- Configuration ---
-// Target BORUS device MAC to listen for (MUST MATCH YOUR DEVICE)
-const char target_mac[] = "EE:93:96:3C:66:B5"; // REPLACE WITH YOUR BORUS DEVICE ADDRESS
+/* ───────────────────── 1.  APPLICATION CONFIG ───────────────────────── */
 
-// Periodic Advertising (AP Heartbeat) Configuration
-#define BASE_ADV_INTERVAL_S 60    // Base interval for AP advertising bursts (seconds)
-#define JITTER_S 5                // Max random jitter to add (0-15 seconds)
-#define ADV_BURST_DURATION_MS 500 // How long AP advertises each time (milliseconds)
-#define BORUS_COMPANY_ID 0x0059   // Expected Company ID in BORUS packet nonce
-#define TIME_FIELD_UNIT_MS 10
+static const char target_mac[] = "EE:93:96:3C:66:B5";   /* BORUS wearable */
 
-// Wearable Packet Type Configuration
-#define SENSOR_ADV_PAYLOAD_TYPE 0x00
-#define AWAY_ADV_PAYLOAD_TYPE 0x01
+#define BASE_ADV_INTERVAL_S      60
+#define JITTER_S                 5
+#define ADV_BURST_DURATION_MS   3000
+#define BORUS_COMPANY_ID      0x0059
+#define TIME_FIELD_UNIT_MS       10
 
-// Wearable Payload Lengths (Payload after Type Byte)
-#define SENSOR_DATA_PACKET_SIZE 20                                    // Plaintext size from BORUS
-#define NONCE_LEN 8                                                   // Nonce size from BORUS
-#define SENSOR_PAYLOAD_DATA_LEN (NONCE_LEN + SENSOR_DATA_PACKET_SIZE) // =28
+#define SENSOR_ADV_PAYLOAD_TYPE  0x00
+#define AWAY_ADV_PAYLOAD_TYPE    0x01
+
+#define SENSOR_DATA_PACKET_SIZE  229
+#define NONCE_LEN                 8
+#define SENSOR_PAYLOAD_DATA_LEN  (NONCE_LEN + SENSOR_DATA_PACKET_SIZE)
 #define SYNC_REQ_PAYLOAD_DATA_LEN 2
 
-// Total Manufacturer Data Length (including Type byte)
-#define SENSOR_MANUF_PAYLOAD_LEN (1 + SENSOR_PAYLOAD_DATA_LEN) // =29
-#define AWAY_MANUF_PAYLOAD_LEN (1 + SYNC_REQ_PAYLOAD_DATA_LEN)     // =3
-
-// !!! IMPORTANT: Use the EXACT SAME KEY as on the BORUS device !!!
-const unsigned char aes_key[16] = {
-    0x9F, 0x7B, 0x25, 0xA0, 0x68, 0x52, 0x33, 0x1C,
-    0x10, 0x42, 0x5E, 0x71, 0x99, 0x84, 0xC7, 0xDD};
-
-// BORUS Device Data Format Constants (from prepare_packet)
-#define TEMPERATURE_LOW_LIMIT 30
+#define TEMPERATURE_LOW_LIMIT    30
 #define PRESSURE_BASE_HPA_X10 8500
+#define MAX_IMU_SAMPLES_IN_PACKET   14
 
-// --- Dynamic Scheduling ---
-#define RPI_SAFETY_MARGIN_MS 1000               // Hou much earlier RPi sends burst than wearable's announced scan time
-volatile sig_atomic_t trigger_ap_burst_now = 0; // Flag set by signal handler
-struct itimerval next_burst_timer;
-time_t next_regular_burst_epoch = 0; // Store absolute time for next default burst
+#ifndef EVT_LE_EXTENDED_ADVERTISING_REPORT
+#define EVT_LE_EXTENDED_ADVERTISING_REPORT 0x0D
+#endif
 
-// Global HCI device handle
-int device = -1;
+#ifndef le16_to_cpu
+#define le16_to_cpu(x) btohs((x))
+#endif
 
-// --- HCI Helper Function ---
-/**
- * @brief Creates a standard HCI request structure.
- */
-struct hci_request ble_hci_request(uint16_t ocf, int clen, void *status, void *cparam)
+static const unsigned char aes_key[16] = {
+    0x9F,0x7B,0x25,0xA0,0x68,0x52,0x33,0x1C,
+    0x10,0x42,0x5E,0x71,0x99,0x84,0xC7,0xDD};
+
+#define RPI_SAFETY_MARGIN_MS   500
+
+/* ─────────── 2.  GLOBALS & TIMERS ───────────────────────────────────── */
+
+static volatile sig_atomic_t shutdown_requested   = 0;
+static volatile sig_atomic_t trigger_ap_burst_now = 0;
+
+static struct itimerval next_burst_timer;
+static time_t next_regular_burst_epoch = 0;
+
+static int device = -1;                          /* HCI socket handle    */
+
+/* ─────────── 3.  HCI COMMAND DEFINITIONS ────────────────────────────── */
+
+#ifndef OCF_LE_SET_EXT_ADV_PARAMS   /* for older bluez headers */
+#define OCF_LE_SET_EXT_ADV_PARAMS   0x0036
+#define OCF_LE_SET_EXT_ADV_DATA     0x0037
+#define OCF_LE_SET_EXT_ADV_ENABLE   0x0039
+#define OCF_LE_SET_EXT_SCAN_PARAMS  0x0041
+#define OCF_LE_SET_EXT_SCAN_ENABLE  0x0042
+#endif
+
+#define LE_SCAN_PHY_1M   0x01
+
+#define UINT24_TO_ARRAY(v, a)  do{ (a)[0]=(v)&0xFF; (a)[1]=((v)>>8)&0xFF; (a)[2]=((v)>>16)&0xFF; }while(0)
+
+/* Extended-adv parameter CP ------------------------------------------- */
+typedef struct __attribute__((packed)) {
+    uint8_t  handle;
+    uint16_t evt_prop;
+    uint8_t  prim_int_min[3];
+    uint8_t  prim_int_max[3];
+    uint8_t  prim_chn_map;
+    uint8_t  own_addr_type;
+    uint8_t  peer_addr_type;
+    bdaddr_t peer_addr;
+    uint8_t  adv_filt_policy;
+    int8_t   adv_tx_power;
+    uint8_t  prim_adv_phy;
+    uint8_t  sec_adv_max_skip;
+    uint8_t  sec_adv_phy;
+    uint8_t  adv_sid;
+    uint8_t  scan_req_notif;
+} le_set_ext_adv_params_cp;
+
+/* Extended-adv data CP ------------------------------------------------- */
+typedef struct __attribute__((packed)) {
+    uint8_t handle;
+    uint8_t operation;
+    uint8_t frag_pref;
+    uint8_t data_len;
+    uint8_t data[251];
+} le_set_ext_adv_data_cp;
+
+/* Extended-adv enable CP ---------------------------------------------- */
+typedef struct __attribute__((packed)) {
+    uint8_t enable;
+    uint8_t num_sets;
+    struct __attribute__((packed)) {
+        uint8_t  handle;
+        uint16_t duration;
+        uint8_t  max_ext_adv_evts;
+    } set[1];
+} le_set_ext_adv_enable_cp;
+
+/* Extended-scan parameter CP ------------------------------------------ */
+typedef struct __attribute__((packed)) {
+    uint8_t  own_addr_type;
+    uint8_t  scanning_filter_policy;
+    uint8_t  scanning_phys;          /* bit-field */
+    struct __attribute__((packed)) { /* settings for PHY 1M only          */
+        uint8_t  scan_type;
+        uint16_t scan_interval;
+        uint16_t scan_window;
+    } phy_1m;
+} le_set_ext_scan_params_cp;
+
+/* Extended-scan enable CP --------------------------------------------- */
+typedef struct __attribute__((packed)) {
+    uint8_t  enable;
+    uint8_t  filter_dup;
+    uint16_t duration;   /* 0 = no limit */
+    uint16_t period;     /* 0 = no periodic scan */
+} le_set_ext_scan_enable_cp;
+
+/* Build generic HCI request */
+static struct hci_request hci_req(uint16_t ocf,int clen,void *status,void *cp)
 {
-    struct hci_request rq;
-    memset(&rq, 0, sizeof(rq));
-    rq.ogf = OGF_LE_CTL;
-    rq.ocf = ocf;
-    rq.cparam = cparam;
-    rq.clen = clen;
+    struct hci_request rq={0};
+    rq.ogf    = OGF_LE_CTL;
+    rq.ocf    = ocf;
+    rq.cparam = cp;
+    rq.clen   = clen;
     rq.rparam = status;
-    rq.rlen = 1; // Expect status byte in return
+    rq.rlen   = 1;
     return rq;
 }
 
-// --- Bluetooth Configuration Functions ---
+/* ─────────── 4.  EXT-ADVERTISER HELPERS ────────────────────────────── */
 
-/**
- * @brief Sets LE Advertising Parameters for AP's heartbeat advertisements.
- */
-int set_advertising_parameters(int dev)
+static int set_static_adv_addr(int dev, const char *str_addr)
 {
-    le_set_advertising_parameters_cp adv_params_cp;
-    memset(&adv_params_cp, 0, sizeof(adv_params_cp));
-    adv_params_cp.min_interval = htobs(0x00A0); // 100ms
-    adv_params_cp.max_interval = htobs(0x00F0); // 150ms (Wider range might help visibility)
-    adv_params_cp.advtype = 0x03;               // Non-connectable undirected advertising (ADV_NONCONN_IND)
-    adv_params_cp.own_bdaddr_type = 0x00;       // Use Public Address (or 0x01 if random address is set)
-    adv_params_cp.chan_map = 0x07;              // All channels
-    adv_params_cp.filter = 0x00;                // No filter
-
+    bdaddr_t a;
     uint8_t status;
-    struct hci_request adv_params_rq = ble_hci_request(OCF_LE_SET_ADVERTISING_PARAMETERS,
-                                                       LE_SET_ADVERTISING_PARAMETERS_CP_SIZE,
-                                                       &status, &adv_params_cp);
-    int ret = hci_send_req(dev, &adv_params_rq, 1000);
-    if (ret < 0 || status != 0)
+
+    if (str2ba(str_addr, &a) < 0)
     {
-        perror("AP: Failed to set advertising parameters");
-        fprintf(stderr, "AP: HCI Status: 0x%02X\n", status);
+        fprintf(stderr, "bad addr %s\n", str_addr);
         return -1;
     }
-    printf("AP: Advertising parameters set.\n");
+
+    uint8_t cp[6];
+    for (int i = 0; i < 6; i++)
+    {
+        cp[i] = a.b[i];
+    }
+
+    struct hci_request rq = {
+        .ogf = OGF_LE_CTL,
+        .ocf = OCF_LE_SET_RANDOM_ADDRESS,
+        .cparam = cp,
+        .clen = sizeof(cp),
+        .rparam = &status,
+        .rlen = 1
+    };
+    
+    if (hci_send_req(dev, &rq, 1000) < 0)
+    {
+        return -1;
+    }
+
+    if (status)
+    {
+        errno = EIO;
+        return -1;
+    }
+    
     return 0;
 }
 
-/**
- * @brief Sets LE Advertising Data for AP's heartbeat, including time until next burst.
- */
-int set_ap_heartbeat_data(int dev, uint16_t time_to_next_cs)
+static int set_ext_adv_params(int dev)
 {
-    le_set_advertising_data_cp adv_data_cp;
-    memset(&adv_data_cp, 0, sizeof(adv_data_cp));
-    uint8_t index = 0;
+    le_set_ext_adv_params_cp cp={0};
+    cp.handle   = 0x00;
+    cp.evt_prop = htobs(0x0010 | 0x0002); /* legacy PDU, non-scan, non-conn */
+    UINT24_TO_ARRAY(0x0050, cp.prim_int_min);   /* 100 ms */
+    UINT24_TO_ARRAY(0x0052, cp.prim_int_max);   /* 150 ms */
+    cp.prim_chn_map  = 0x07;
+    cp.own_addr_type = 0x01;
+    cp.adv_tx_power  = 0x7F;
+    cp.prim_adv_phy  = 0x01;
+    cp.sec_adv_phy   = 0x01;
 
-    // --- Manufacturer Specific Data AD Structure ---
-    // Length: 1 byte Type + 2 bytes Company ID + 2 bytes Time Data = 5 bytes total field length
-    adv_data_cp.data[index++] = 0x05; // Field Length
-    adv_data_cp.data[index++] = 0xFF; // Type: Manufacturer Specific Data
-    adv_data_cp.data[index++] = 0x59;
-    adv_data_cp.data[index++] = 0x00;
-    // Encode time as Little Endian uint16_t
-    adv_data_cp.data[index++] = (uint8_t)(time_to_next_cs & 0xFF);        // Time LSB
-    adv_data_cp.data[index++] = (uint8_t)((time_to_next_cs >> 8) & 0xFF); // Time MSB
-
-    adv_data_cp.length = index; // Total length of all AD structures included
-
-    if (adv_data_cp.length > 31)
-    {
-        return -1;
-    }
-
-    uint8_t status;
-    struct hci_request adv_data_rq = ble_hci_request(OCF_LE_SET_ADVERTISING_DATA,
-                                                     1 + adv_data_cp.length, // clen = 1 byte length field + data
-                                                     &status, &adv_data_cp);
-    int ret = hci_send_req(dev, &adv_data_rq, 1000);
-    if (ret < 0 || status != 0)
-    {
-        perror("AP: Failed to set advertising data with time");
-        fprintf(stderr, "AP: HCI Status: 0x%02X\n", status);
-        return -1;
-    }
-    // printf("AP: Advertising data set (Time until next: %u s).\n", time_to_next_s);
+    uint8_t st;
+    struct hci_request rq=hci_req(OCF_LE_SET_EXT_ADV_PARAMS,sizeof(cp),&st,&cp);
+    if(hci_send_req(dev,&rq,1000)<0||st){fprintf(stderr,"ext adv param fail 0x%02X\n",st);return -1;}
     return 0;
 }
 
-/**
- * @brief Enable or disable AP advertising.
- */
-int set_advertise_enable(int dev, bool enable)
+static int set_ext_adv_data_time(int dev,uint16_t time_cs)
 {
-    le_set_advertise_enable_cp advertise_cp;
-    memset(&advertise_cp, 0, sizeof(advertise_cp));
-    advertise_cp.enable = enable ? 0x01 : 0x00;
+    le_set_ext_adv_data_cp cp={0};
+    cp.handle    = 0x00;
+    cp.operation = 0x03;            /* complete data */
+    cp.frag_pref = 0x00;
+    uint8_t *d=cp.data;
+    *d++=0x05; *d++=0xFF; *d++=0x59; *d++=0x00;
+    *d++=(uint8_t)(time_cs & 0xFF); *d++=(uint8_t)(time_cs>>8);
+    cp.data_len=d-cp.data;
 
-    uint8_t status;
-    struct hci_request enable_adv_rq = ble_hci_request(OCF_LE_SET_ADVERTISE_ENABLE,
-                                                       LE_SET_ADVERTISE_ENABLE_CP_SIZE,
-                                                       &status, &advertise_cp);
-    int ret = hci_send_req(dev, &enable_adv_rq, 1000);
-    if (ret < 0 || status != 0)
-    {
-        fprintf(stderr, "AP: Failed to %s advertising, Status: 0x%02X\n", enable ? "enable" : "disable", status);
-        perror("AP: set_advertise_enable");
-        return -1;
-    }
+    uint8_t st;
+    struct hci_request rq=hci_req(OCF_LE_SET_EXT_ADV_DATA,4+cp.data_len,&st,&cp);
+    if(hci_send_req(dev,&rq,1000)<0||st){fprintf(stderr,"ext adv data fail 0x%02X\n",st);return -1;}
     return 0;
 }
 
-/**
- * @brief Sets LE Scan Parameters for listening to BORUS.
- */
-int set_scan_parameters(int dev)
+static int set_ext_adv_enable(int dev,bool en)
 {
-    le_set_scan_parameters_cp scan_params_cp;
-    memset(&scan_params_cp, 0, sizeof(scan_params_cp));
-    // Use Passive Scan as sensor data is in main ADV packet
-    scan_params_cp.type = 0x00;
-    // Use aggressive scanning parameters to catch fast BORUS advertisements
-    scan_params_cp.interval = htobs(0x0010); // 10ms interval
-    scan_params_cp.window = htobs(0x0010);   // 10ms window (100% duty cycle)
-    scan_params_cp.own_bdaddr_type = 0x00;   // Public Device Address
-    scan_params_cp.filter = 0x00;            // Accept all advertisements
+    le_set_ext_adv_enable_cp cp={0};
+    cp.enable   = en?1:0;
+    cp.num_sets = 1;
+    cp.set[0].handle = 0x00;
 
-    uint8_t status;
-    struct hci_request scan_params_rq = ble_hci_request(OCF_LE_SET_SCAN_PARAMETERS,
-                                                        LE_SET_SCAN_PARAMETERS_CP_SIZE,
-                                                        &status, &scan_params_cp);
-    int ret = hci_send_req(dev, &scan_params_rq, 1000);
-    if (ret < 0 || status != 0)
-    {
-        perror("AP: Failed to set scan parameters (Passive)");
-        fprintf(stderr, "AP: HCI Status: 0x%02X\n", status);
-        return -1;
-    }
-    printf("AP: Scan parameters set (Passive Scan).\n");
+    uint8_t st;
+    struct hci_request rq=hci_req(OCF_LE_SET_EXT_ADV_ENABLE,sizeof(cp),&st,&cp);
+    if(hci_send_req(dev,&rq,1000)<0||st){fprintf(stderr,"ext adv %s fail 0x%02X\n",en?"en":"dis",st);return -1;}
     return 0;
 }
 
-/**
- * @brief Enable or disable LE scanning.
- */
-int set_scan_enable(int dev, bool enable, bool filter_duplicates)
-{
-    le_set_scan_enable_cp scan_cp;
-    memset(&scan_cp, 0, sizeof(scan_cp));
-    scan_cp.enable = enable ? 0x01 : 0x00;
-    scan_cp.filter_dup = filter_duplicates ? 0x01 : 0x00; // Disable filtering for higher rate
+/* ─────────── 5.  EXT-SCANNER HELPERS ───────────────────────────────── */
 
-    uint8_t status;
-    struct hci_request enable_scan_rq = ble_hci_request(OCF_LE_SET_SCAN_ENABLE,
-                                                        LE_SET_SCAN_ENABLE_CP_SIZE,
-                                                        &status, &scan_cp);
-    int ret = hci_send_req(dev, &enable_scan_rq, 1000);
-    if (ret < 0 || status != 0)
-    {
-        fprintf(stderr, "AP: Failed to %s scan, Status: 0x%02X\n", enable ? "enable" : "disable", status);
-        perror("AP: set_scan_enable");
-        return -1;
-    }
+static int set_ext_scan_params(int dev)
+/* passive scan, 1 M PHY, 10 ms window */
+{
+    le_set_ext_scan_params_cp cp={0};
+    cp.own_addr_type          = 0x00;
+    cp.scanning_filter_policy = 0x00;
+    cp.scanning_phys          = LE_SCAN_PHY_1M;
+    cp.phy_1m.scan_type       = 0x00;          /* passive */
+    cp.phy_1m.scan_interval   = htobs(0x0010); /* 10 ms  */
+    cp.phy_1m.scan_window     = htobs(0x0010); /* 10 ms  */
+
+    uint8_t st;
+    struct hci_request rq=hci_req(OCF_LE_SET_EXT_SCAN_PARAMS,sizeof(cp),&st,&cp);
+    if(hci_send_req(dev,&rq,1000)<0||st){fprintf(stderr,"ext scan param fail 0x%02X\n",st);return -1;}
     return 0;
 }
 
-// --- Decryption Function ---
-/**
- * @brief Decrypts sensor data using AES-128-CTR.
- * @return 0 on success, negative on failure.
- */
-int decrypt_sensor_block_ap(const unsigned char *key, const uint8_t *nonce,
-                            const uint8_t *ciphertext, uint8_t *plaintext)
+static int set_ext_scan_enable(int dev,bool en,bool filter_dup)
 {
-    EVP_CIPHER_CTX *ctx = NULL;
-    int len = 0, plaintext_len = 0, ret = 0;
-    unsigned char iv[AES_BLOCK_SIZE]; // 16 bytes for AES
+    le_set_ext_scan_enable_cp cp={0};
+    cp.enable     = en?1:0;
+    cp.filter_dup = filter_dup?1:0;  /* 0=disable,1=enable */
+    cp.duration   = 0;               /* continuous */
+    cp.period     = 0;
 
-    memset(iv, 0, AES_BLOCK_SIZE);
-    memcpy(iv, nonce, NONCE_LEN); // Copy 8-byte nonce to start of IV
+    uint8_t st;
+    struct hci_request rq=hci_req(OCF_LE_SET_EXT_SCAN_ENABLE,sizeof(cp),&st,&cp);
+    if(hci_send_req(dev,&rq,1000)<0||st){fprintf(stderr,"ext scan %s fail 0x%02X\n",en?"en":"dis",st);return -1;}
+    return 0;
+}
 
-    ctx = EVP_CIPHER_CTX_new();
-    if (!ctx)
-    {
-        ret = -1;
-        goto cleanup_decrypt;
-    }
+/* ─────────── 6.  AES-CTR DECRYPT (unchanged) ───────────────────────── */
 
-    if (1 != EVP_DecryptInit_ex(ctx, EVP_aes_128_ctr(), NULL, key, iv))
-    {
-        ret = -2;
-        goto cleanup_decrypt;
-    }
-    if (1 != EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, SENSOR_DATA_PACKET_SIZE))
-    {
-        ret = -3;
-        goto cleanup_decrypt;
-    }
-    plaintext_len = len;
-    if (1 != EVP_DecryptFinal_ex(ctx, plaintext + len, &len))
-    {
-        ret = -4;
-        goto cleanup_decrypt;
-    }
-    plaintext_len += len;
+static int decrypt_sensor_block_ap(const unsigned char *key,
+                                   const uint8_t *nonce,
+                                   const uint8_t *cipher,
+                                   uint8_t *plain)
+{
+    EVP_CIPHER_CTX *ctx=NULL; int len=0,plen=0,ret=0;
+    unsigned char iv[AES_BLOCK_SIZE]={0}; memcpy(iv,nonce,NONCE_LEN);
 
-    if (plaintext_len != SENSOR_DATA_PACKET_SIZE)
-    {
-        ret = -5;
-    } // Length mismatch
-    else
-    {
-        ret = 0;
-    } // Success
-
-cleanup_decrypt:
-    if (ret != 0)
-    {
-        fprintf(stderr, "AP: Decryption Error Code %d\n", ret);
-        ERR_print_errors_fp(stderr);
-    }
-    if (ctx)
-        EVP_CIPHER_CTX_free(ctx);
+    ctx=EVP_CIPHER_CTX_new();
+    if(!ctx){ret=-1;goto done;}
+    if(1!=EVP_DecryptInit_ex(ctx,EVP_aes_128_ctr(),NULL,key,iv)){ret=-2;goto done;}
+    if(1!=EVP_DecryptUpdate(ctx,plain,&len,cipher,SENSOR_DATA_PACKET_SIZE)){ret=-3;goto done;}
+    plen=len;
+    if(1!=EVP_DecryptFinal_ex(ctx,plain+len,&len)){ret=-4;goto done;}
+    plen+=len;
+    ret=(plen==SENSOR_DATA_PACKET_SIZE)?0:-5;
+done:
+    if(ret) ERR_print_errors_fp(stderr);
+    if(ctx) EVP_CIPHER_CTX_free(ctx);
     return ret;
 }
 
-// --- Signal Handlers ---
-volatile sig_atomic_t shutdown_requested = 0;
-void term_signal_handler(int signum)
+/* ─────────── 7.  SIGNALS & TIMERS ───────────────────────────────────── */
+
+static void term_handler(int s){(void)s;shutdown_requested=1;}
+static void alarm_handler(int s){(void)s;trigger_ap_burst_now=1;}
+
+static int schedule_ap_burst(long sec,long usec)
 {
-    printf("\nAP: Signal %d received, requesting shutdown...\n", signum);
-    shutdown_requested = -1;
+    struct itimerval tv = { .it_value = { .tv_sec=sec,.tv_usec=usec }};
+    return setitimer(ITIMER_REAL,&tv,NULL);
 }
 
-void alarm_signal_handler(int signum)
+static uint16_t time_to_next_cs(void)
 {
-    if (signum == SIGALRM)
-    {
-        trigger_ap_burst_now = 1;
-    }
+    struct timeval tv; gettimeofday(&tv,NULL);
+    uint64_t now=(uint64_t)tv.tv_sec*1000000ULL+tv.tv_usec;
+    uint64_t next=(uint64_t)next_regular_burst_epoch*1000000ULL;
+    if(next<=now) return 0;
+    uint64_t dcs=(next-now+9999ULL)/10000ULL;
+    return dcs>0xFFFF?0xFFFF:(uint16_t)dcs;
 }
 
-int schedule_ap_burst(long interval_sec, long interval_usec)
+/* ─────────── 8.  PROCESS EXTENDED ADV REPORTS  ─────────────────────── */
+
+#define MAX_ADV_BUF 260   /* 229 + 15 + safety */
+
+typedef struct {
+    bdaddr_t addr;
+    uint8_t  sid;
+    int      len;
+    uint8_t  data[MAX_ADV_BUF];
+} adv_acc_t;
+
+/* ------------------------------------------------------------------ */
+/*  process_scan_packet() -- reassemble two fragments and debug print */
+/* ------------------------------------------------------------------ */
+static void process_scan_packet(uint8_t *buf, int len)
 {
-    memset(&next_burst_timer, 0, sizeof(next_burst_timer));
-    next_burst_timer.it_value.tv_sec = interval_sec;
-    next_burst_timer.it_value.tv_usec = interval_usec;
+    /* ---------- static re-assembly state (only one BORUS device) ---- */
+    static uint8_t  acc_data[260];
+    static int      acc_len = 0;
+    static bdaddr_t acc_addr = {{0}};
+    static uint8_t  acc_sid  = 0xFF;
 
-    // it_interval remains 0 for a noe-shot timer
-    if (setitimer(ITIMER_REAL, &next_burst_timer, NULL) == -1)
-    {
-        perror("AP: Failed to set timer for AP burst");
-        return -1;
-    }
-
-    if (interval_sec == 0 & interval_usec == 0)
-    {
-        printf("AP: Cancelled AP burst timer\n");
-    }
-    else
-    {
-        printf("AP: Scheduled next AP burst timer for %ld.%06ld seconds\n", interval_sec, interval_usec);
-    }
-    return 0;
-}
-
-uint16_t calculate_time_to_net_regular_burst()
-{
-    time_t now = time(NULL);
-
-    if (next_regular_burst_epoch <= now)
-    {
-        return 0; // Next burst is due or overdue
-    }
-
-    time_t delta = next_regular_burst_epoch - now;
-    uint64_t delta_cs = (uint64_t)delta * 1000 / TIME_FIELD_UNIT_MS;
-
-    return (delta_cs > UINT16_MAX) ? UINT16_MAX : (uint16_t)delta_cs; 
-}
-
-// --- Packet Processing Function ---
-/**
- * @brief Process received HCI LE Meta Events (Advertising Reports).
- */
-void process_scan_packet(uint8_t *buf, int len)
-{
-    if (len < HCI_EVENT_HDR_SIZE + 1 + EVT_LE_META_EVENT_SIZE + 1)
-    {
+    if (len < HCI_EVENT_HDR_SIZE + 1 + EVT_LE_META_EVENT_SIZE)
         return;
-    }
 
-    evt_le_meta_event *meta_event = (evt_le_meta_event *)(buf + HCI_EVENT_HDR_SIZE + 1);
-
-    if (meta_event->subevent != EVT_LE_ADVERTISING_REPORT)
-    {
+    evt_le_meta_event *me = (void *)(buf + HCI_EVENT_HDR_SIZE + 1);
+    if (me->subevent != EVT_LE_EXTENDED_ADVERTISING_REPORT)
         return;
-    }
 
-    uint8_t reports_count = meta_event->data[0];
-    void *offset = meta_event->data + 1;
+    uint8_t reports = me->data[0];
+    uint8_t *rp     = me->data + 1;
 
-    while (reports_count-- && (offset < (void *)buf + len))
-    {
-        le_advertising_info *info = (le_advertising_info *)offset;
-        if ((void *)info + sizeof(le_advertising_info) > (void *)buf + len ||
-            (void *)info->data + info->length > (void *)buf + len)
-        {
-            fprintf(stderr, "AP: Malformed report data\n");
-            break;
+    while (reports--) {
+        /* --- fixed header ------------------------------------------ */
+        uint16_t evt_type = le16_to_cpu(*(uint16_t *)rp);  rp += 2;
+        uint8_t  addr_type = *rp++;
+        bdaddr_t addr;  memcpy(&addr, rp, 6);  rp += 6;
+        uint8_t  prim_phy = *rp++, sec_phy = *rp++, sid = *rp++;
+        int8_t   tx_pwr = *rp++,  rssi    = *rp++;
+        rp += 2      /* periodic int */ + 1 + 6;  /* dir addr */
+        uint8_t adv_len = *rp++;
+
+        uint8_t *adv = rp;  rp += adv_len;
+
+        /* only care about our BORUS MAC */
+        char addr_str[18];  ba2str(&addr, addr_str);
+        if (strcmp(addr_str, target_mac))
+            continue;
+
+        /* ---------- DEBUG: show fragment info ---------------------- */
+        struct timeval tv; gettimeofday(&tv, NULL);
+        printf("%ld.%06ld  RSSI %d  SID %u  dataStatus=%u  len=%u\n",
+               (long)tv.tv_sec, (long)tv.tv_usec,
+               rssi, sid, (evt_type >> 13) & 0x03, adv_len);
+
+        /* ---------- (re)start accumulator if new addr/SID ---------- */
+        if (bacmp(&addr, &acc_addr) || sid != acc_sid) {
+            acc_addr = addr;
+            acc_sid  = sid;
+            acc_len  = 0;
         }
 
-        char addr[18];
-        ba2str(&(info->bdaddr), addr);
+        if (acc_len + adv_len > sizeof(acc_data))   /* shouldn't happen */
+            acc_len = 0;
 
-        if (strcmp(addr, target_mac) == 0)
-        { // Check if it's our BORUS device
-            time_t now = time(NULL);
-            struct timeval tv_now;
-            gettimeofday(&tv_now, NULL); // Get time with microseconds
-            char timestamp_str[30];
-            strftime(timestamp_str, 20, "%Y-%m-%d %H:%M:%S", localtime(&now));
-            sprintf(timestamp_str + 19, ".%06ld", tv_now.tv_usec);
+        memcpy(acc_data + acc_len, adv, adv_len);
+        acc_len += adv_len;
 
-            const char *packet_type_str = "Unknown";
-            bool is_primary_adv = false;
+        /* need at least 2 bytes to read first AD header */
+        if (acc_len < 2)
+            continue;
 
-            // Identify packet type (ADV_IND=0x00, ADV_SCAN_IND=0x02, ADV_NONCONN_IND=0x03)
-            if (info->evt_type == 0x00 || info->evt_type == 0x02 || info->evt_type == 0x03)
-            {
-                is_primary_adv = true;
-                packet_type_str = (info->evt_type == 0x00) ? "ADV_IND" : ((info->evt_type == 0x02) ? "ADV_SCAN_IND" : "ADV_NONCONN_IND");
-            }
-            else if (info->evt_type == 0x04)
-            {
-                packet_type_str = "SCAN_RSP";
-            }
+        uint8_t field_len  = acc_data[0];
+        uint8_t field_type = acc_data[1];
 
-            // Only process primary ADV packets for sensor data now
-            if (is_primary_adv)
-            {
-                printf("%s AP: Received %s from BORUS %s RSSI: %d\n", timestamp_str, packet_type_str, addr, (int8_t)info->data[info->length]);
+        /* wait until the whole Manufacturer block (len+1 bytes) is present */
+        if (field_type != 0xFF || acc_len < field_len + 1)
+            continue;
 
-                uint8_t *adv_data = info->data;
-                int adv_len = info->length;
-                int current_pos = 0;
+        /* ---------- DEBUG: dump first 10 bytes of manufacturer ----- */
+        printf("  Manufacturer block complete (%u bytes). First 10: ",
+               field_len);
+        for (int i = 0; i < 10 && i < field_len - 1; i++)
+            printf("%02x ", acc_data[2 + i]);
+        printf("\n");
 
-                // Parse AD Structures
-                while (current_pos < adv_len)
+        /*  Now parse manufacturer payload --------------------------- */
+        uint8_t *pay_start = &acc_data[2];   // This is custom type | nonce | sensor data       
+        uint8_t pay_len = field_len - 1;    // This is the length of custom type | nonce | sensor data
+
+        uint8_t  ptype   = pay_start[0];    // This is custom type
+        uint8_t *payload = &pay_start[1];   // This is nonce | sensor data
+        uint16_t plen    = pay_len - 1;     // This is the length of nonce | sensor data
+        
+        uint8_t *nonce = payload;
+        uint16_t cid = (nonce[0]) | (nonce[1] << 8);
+        if (cid != BORUS_COMPANY_ID && ptype == SENSOR_ADV_PAYLOAD_TYPE) {
+            printf("  CID mismatch (0x%04X) skipping\n", cid);
+            acc_len = 0;
+            continue;
+        }
+
+        printf("  ptype=%u  plen=%u\n", ptype, plen);
+
+        if (ptype == SENSOR_ADV_PAYLOAD_TYPE &&
+            plen  == SENSOR_PAYLOAD_DATA_LEN) {
+            
+            uint8_t plain[SENSOR_DATA_PACKET_SIZE]; 
+            if (decrypt_sensor_block_ap(aes_key, payload,
+                                        payload + NONCE_LEN,
+                                        plain) == 0) {
+                /*  ── your original plaintext parsing routine ──       */
+                
+                int off = 0;
+
+                // Temperature 
+                uint8_t encT = plain[off++];
+                int tempC = (int)encT - TEMPERATURE_LOW_LIMIT;
+                
+                // Pressure 
+                uint16_t po;  
+                memcpy(&po, &plain[off], 2);  
+                off += 2;
+                float press = (po + PRESSURE_BASE_HPA_X10) / 10.0f;
+                
+                // Battery 
+                uint8_t batt = plain[off++];
+                
+                // Number of IMU batch
+                uint8_t number_of_batch = plain[off++];
+                
+                // IMU Batch
+                typedef struct {
+                    int16_t v[6];
+                    uint32_t ts;
+                } imu_payload_t;
+
+                imu_payload_t samples[MAX_IMU_SAMPLES_IN_PACKET]; 
+
+                if (number_of_batch > MAX_IMU_SAMPLES_IN_PACKET)
                 {
-                    uint8_t field_len = adv_data[current_pos];
-                    if (field_len == 0 || (current_pos + 1 + field_len) > adv_len)
-                    {
-                        break;
-                    }
+                    number_of_batch = MAX_IMU_SAMPLES_IN_PACKET;
+                }
 
-                    uint8_t field_type = adv_data[current_pos + 1];
+                for (uint8_t i = 0; i < number_of_batch; i++)
+                {
+                    memcpy(samples[i].v, &plain[off], 12);
+                    off += 12;
+                    memcpy(&samples[i].ts, &plain[off], 4);
+                    off += 4; 
+                }
+                
+                // printf("  DECRYPT OK  temp=%dC  press=%.1fhPa  batt=%u%%  samples=%u\n",
+                //        tempC, press, batt, number_of_batch);
+                
+                for (uint8_t i = 0; i < number_of_batch; i++)
+                {
+                    // printf("    #%02u   ts=%u   ACC[%.2f, %.2f, %.2f]   GYR[%.2f, %.2f, %.2f]\n",
+                    // i,
+                    // samples[i].ts, 
+                    // samples[i].v[0]/100.0f, samples[i].v[1]/100.0f, samples[i].v[2]/100.0f,
+                    // samples[i].v[3]/100.0f, samples[i].v[4]/100.0f, samples[i].v[5]/100.0f); 
+                }
+            } else {
+                printf("  Decrypt FAILED\n");
+            }
+        } else if (ptype == AWAY_ADV_PAYLOAD_TYPE && plen == SYNC_REQ_PAYLOAD_DATA_LEN)
+        {
+            uint16_t delay_s = payload[0] | (payload[1] << 8);
+            printf("SYNC-REQ wearable scans in %u s\n", delay_s);
 
-                    if (field_type == 0xFF)
-                    { // Manufacturer Specific Data
-                        uint8_t *mfr_payload_start = &adv_data[current_pos + 2];
-                        uint8_t mfr_payload_len = field_len - 1;
+            long trig_us = (long)delay_s * 1000000L - (long)RPI_SAFETY_MARGIN_MS * 1000L;
+            if (trig_us < 50000)
+            {
+                trig_us = 50000;
+            }
 
-                        if (mfr_payload_len >= 1)
-                        {
-                            uint8_t packet_type = mfr_payload_start[0]; // Get Type byte
-                            uint8_t *actual_payload = &mfr_payload_start[1];
-                            uint8_t actual_payload_len = mfr_payload_len - 1; // Length Type
-
-                            // Process based on Packet Type
-                            if (packet_type == SENSOR_ADV_PAYLOAD_TYPE && actual_payload_len == SENSOR_PAYLOAD_DATA_LEN)
-                            {
-                                // --- Type 0x00: Sensor Data ---
-                                uint8_t *nonce = actual_payload; // First 8 bytes of actual payload
-                                uint16_t cid = nonce[0] | (nonce[1] << 8);
-
-                                if (cid != BORUS_COMPANY_ID)
-                                {
-                                    fprintf(stderr, "AP: Sensor packet from %s mismatched ID", addr);
-                                    goto next_report;
-                                }
-
-                                uint8_t *ciphertext = actual_payload + NONCE_LEN; // Next 20 bytes
-                                uint8_t plaintext[SENSOR_DATA_PACKET_SIZE];
-
-                                printf("%s AP: Received Sensor Packet (Type 0x00) with CID 0x%04X\n", timestamp_str, cid);
-
-                                if (decrypt_sensor_block_ap(aes_key, nonce, ciphertext, plaintext) == 0)
-                                {
-                                    // --- Parse Plaintext ---
-                                    int pt_offset = 0;
-                                    uint8_t encoded_temp = plaintext[pt_offset++];
-                                    int temp_c = (int)encoded_temp - TEMPERATURE_LOW_LIMIT;
-
-                                    uint16_t pressure_offset;
-                                    memcpy(&pressure_offset, &plaintext[pt_offset], sizeof(pressure_offset)); 
-                                    pt_offset += sizeof(pressure_offset);
-                                    uint16_t pressure_x10hpa = pressure_offset + PRESSURE_BASE_HPA_X10;
-                                    float pressure_hpa = (float)pressure_x10hpa / 10.0f;
-
-                                    int16_t imu[6];
-                                    float imu_scaled[6];
-                                    
-                                    for (int i = 0; i < 6; i++)
-                                    {
-                                        memcpy(&imu[i], &plaintext[pt_offset], sizeof(imu[i])); 
-                                        pt_offset += sizeof(imu[i]); 
-                                        imu_scaled[i] = (float)imu[i] / 100.0f;
-                                    }
-                                    
-                                    uint32_t ts;
-                                    memcpy(&ts, &plaintext[pt_offset], sizeof(ts));
-                                    pt_offset += sizeof(ts);
-
-                                    uint8_t batt_pct = plaintext[pt_offset++];
-
-                                    printf("AP: DECRYPTED -> Temp:%dC Pres:%.1fhPa Batt:%u%% TS:%u IMU:[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]\n",
-                                           temp_c, pressure_hpa, batt_pct, ts,
-                                           imu_scaled[0], imu_scaled[1], imu_scaled[2], imu_scaled[3], imu_scaled[4], imu_scaled[5]);
-                                    fflush(stdout);
-
-                                    schedule_ap_burst(0, 0);  // Cancel one-shot timer
-                                }
-                                goto next_report;
-                            }
-                            else if (packet_type == AWAY_ADV_PAYLOAD_TYPE && actual_payload_len == SYNC_REQ_PAYLOAD_DATA_LEN)
-                            {
-                                // --- Type 0x01: Away Announce ---
-                                uint16_t announced_scan_delay_s = actual_payload[0] | (actual_payload[1] << 8);
-                                printf("AP: Received Sync Request (Type 0x01) from %s. Wearable scans in %u s\n", addr, announced_scan_delay_s);
-
-                                // Calculate when to send our AP burst
-                                struct timeval tv_trigger;
-                                // Add announced delay, subtract safety margin
-                                long trigger_delay_usec = (long)announced_scan_delay_s * 1000000L - (long)RPI_SAFETY_MARGIN_MS * 1000L;
-                                if (trigger_delay_usec < 0)
-                                {
-                                    trigger_delay_usec = 50000;
-                                }
-
-                                tv_trigger.tv_sec = trigger_delay_usec / 1000000L;
-                                tv_trigger.tv_usec = trigger_delay_usec % 1000000L;
-
-                                printf("AP: Dynamically scheduling AP burst in %ld.%06ld seconds\n", tv_trigger.tv_sec, tv_trigger.tv_usec);
-
-                                // Schedule one-shot timer using alarm/setitimer
-                                trigger_ap_burst_now = 0; // Clear previous flag
-                                schedule_ap_burst(tv_trigger.tv_sec, tv_trigger.tv_usec);
-
-                                goto next_report;
-                            }
-                            else
-                            {
-                                fprintf(stderr, "AP: Unknown packet type (%u) or wrong payload len (%u)\n",
-                                        packet_type, actual_payload_len);
-                            }
-                        }
-                        else
-                        {
-                            fprintf(stderr, "AP: Mfr data too short for Type byte (Len: %u)\n", mfr_payload_len);
-                        }
-                        break; 
-                    } // end if field type
-                    current_pos += (1 + field_len);
-                } // end while parse ad structure 
-            } // end if evt_type == primary adv type
-            break;
-        } // end if(strcmp(addr, target_mac) == 0)
-        offset = info->data + info->length + 1; // Move to next report
-    } // end while(reports_count --)
-    next_report :;
+            schedule_ap_burst(trig_us / 1000000L, trig_us % 1000000L);
+        }
+        
+        /*  reset accumulator for next advertising event               */
+        acc_len = 0;
+    }
 }
 
-static uint16_t calc_time_to_next_cs(void)
+
+/* ─────────── 9.  MAIN LOOP ─────────────────────────────────────────── */
+
+int main(void)
 {
-    struct timeval tv;
-    gettimeofday(&tv, NULL); 
-
-    uint64_t now_us = (uint64_t)tv.tv_sec * 1000000ULL + tv.tv_usec;
-    uint64_t next_us = (uint64_t)next_regular_burst_epoch * 1000000ULL; 
-
-    if (next_us <= now_us){
-        return 0;
-    }
-
-    uint64_t delta_cs = (next_us - now_us + 9999ULL) / 10000ULL;
-
-    if (delta_cs > 0xFFFF){
-        delta_cs = 0xFFFF;
-    }
-
-    return (uint16_t)delta_cs;
-}
-
-// --- Main Function ---
-int main()
-{
-    int ret;
     srand(time(NULL));
-    signal(SIGINT, term_signal_handler);
-    signal(SIGTERM, term_signal_handler);
-    signal(SIGALRM, alarm_signal_handler);
+    signal(SIGINT,  term_handler);
+    signal(SIGTERM, term_handler);
+    signal(SIGALRM, alarm_handler);
 
-    // --- HCI Device Initialization ---
-    printf("AP: Opening HCI device...\n");
-    device = hci_open_dev(1);
+    device=hci_open_dev(1); if(device<0) device=hci_open_dev(0);
+    if(device<0){perror("hci_open_dev");return 1;}
+    int fl=fcntl(device,F_GETFL,0); fcntl(device,F_SETFL,fl|O_NONBLOCK);
 
-    if (device < 0)
+    if (set_static_adv_addr(device, "C2:0D:8E:96:F8:23") < 0)
     {
-        device = hci_open_dev(0);
+        perror("Set random static addr");
+        goto exit; 
     }
+    
+    if(set_ext_adv_params(device)<0)  goto exit;
+    if(set_ext_scan_params(device)<0) goto exit;
+    
+    struct hci_filter flt; hci_filter_clear(&flt);
+    hci_filter_set_ptype(HCI_EVENT_PKT,&flt);
+    hci_filter_set_event(EVT_LE_META_EVENT,&flt);
+    setsockopt(device,SOL_HCI,HCI_FILTER,&flt,sizeof(flt));
 
-    if (device < 0)
+    int intv=BASE_ADV_INTERVAL_S+(rand()%(JITTER_S+1));
+    next_regular_burst_epoch=time(NULL)+intv;
+    schedule_ap_burst(intv,0);
+
+    bool scanning=false, advertising=false;
+
+    while(!shutdown_requested)
     {
-        perror("AP: Failed to open any HCI device.");
-        return 1;
-    }
-    printf("AP: Using device %d\n", device);
-
-    int flags = fcntl(device, F_GETFL, 0);
-    if (flags == -1 || fcntl(device, F_SETFL, flags | O_NONBLOCK) == -1)
-    {
-        perror("AP: Failed to set socket non-blocking");
-        hci_close_dev(device);
-        return 1;
-    }
-    printf("AP: HCI device opened and set to non-blocking.\n");
-
-    // --- Initial BLE Configuration ---
-    printf("AP: Configuring initial BLE parameters...\n");
-
-    if (set_advertising_parameters(device) < 0)
-    {
-        goto ap_cleanup; // For AP's own ADV
-    }
-
-    if (set_scan_parameters(device) < 0)
-    {
-        goto ap_cleanup; // For scanning BORUS
-    }
-
-    // Set HCI event filter for LE Meta Events
-    struct hci_filter nf;
-    hci_filter_clear(&nf);
-    hci_filter_set_ptype(HCI_EVENT_PKT, &nf);
-    hci_filter_set_event(EVT_LE_META_EVENT, &nf);
-    if (setsockopt(device, SOL_HCI, HCI_FILTER, &nf, sizeof(nf)) < 0)
-    {
-        perror("AP: Could not set HCI filter");
-        goto ap_cleanup;
-    }
-    printf("AP: HCI filter set.\n");
-
-    // --- Main Loop Variables ---
-    int current_regular_interval_s = BASE_ADV_INTERVAL_S + (rand() % (JITTER_S + 1));
-    next_regular_burst_epoch = time(NULL) + current_regular_interval_s; // Schedule first regular burst
-    schedule_ap_burst(current_regular_interval_s, 0);                   // Start the regular timer
-    bool is_scanning = false;
-    bool is_advertising = false;
-
-    printf("AP: Starting main loop (Passive Scan + Periodic/Dynamic Advertise)...\n");
-    printf("AP: Initial regular AP burst in %d seconds.\n", current_regular_interval_s);
-
-    // --- Main Loop ---
-    while (!shutdown_requested)
-    {
-        time_t now_main = time(NULL);
-
-        // Check if AP Burst Triggered (by timer or dynamic schedule)
-        if (trigger_ap_burst_now)
+        if(trigger_ap_burst_now)
         {
-            trigger_ap_burst_now = 0; // Clear flag
+            trigger_ap_burst_now=0;
 
-            // Calculate time until next regularly scheduled burst for the payload
-            current_regular_interval_s = BASE_ADV_INTERVAL_S + (rand() % (JITTER_S + 1));
-            next_regular_burst_epoch = time(NULL) + current_regular_interval_s; // Update regular schedule
-            uint16_t time_to_next_cs = calc_time_to_next_cs();     // For ADV payload
+            printf("===================== AP burst TIMER fired: start advertising ==================== \n"); 
 
-            printf("AP: [%s] Triggering AP Heartbeat burst. Next regular burst in %u cs (%.1f s)\n", ctime(&now_main), time_to_next_cs, time_to_next_cs / 10.0f);
+            int tcs=time_to_next_cs();
+            if(scanning){ set_ext_scan_enable(device,false,false); scanning=false; usleep(50000);}
+            set_ext_adv_data_time(device,(uint16_t)tcs);
+            set_ext_adv_enable(device,true); advertising=true;
+            usleep(ADV_BURST_DURATION_MS*1000);
+            set_ext_adv_enable(device,false); advertising=false;
 
-            // --- Perform Burst ---
-            if (is_scanning)
-            {
-                if (set_scan_enable(device, false, false) == 0)
-                {
-                    is_scanning = false;
-                    usleep(50000);
-                }
-                else
-                {
-                    fprintf(stderr, "AP: Warn - Failed to disable scan for burst\n");
-                }
-            }
+            printf("==================== AP burst Finished (%.1f s) ===================== \n", 
+                ADV_BURST_DURATION_MS / 1000.0); 
 
-            if (set_ap_heartbeat_data(device, time_to_next_cs) == 0)
-            {
-                if (set_advertise_enable(device, true) == 0)
-                {
-                    is_advertising = true;
-                    usleep(ADV_BURST_DURATION_MS * 1000);
-                    set_advertise_enable(device, false);
-                    is_advertising = false;
-                }
-                else
-                {
-                    fprintf(stderr, "AP: Warn - Failed to start advertising\n");
-                    is_advertising = false; 
-                }
-            }
-            else
-            {
-                fprintf(stderr, "AP: Warn - Failed to set advertisement data\n");
-            }
-
-            // Schedule the next regular burst timer
-            schedule_ap_burst(current_regular_interval_s, 0);
-            printf("AP: Next regular burst timer reset for %d seconds\n", current_regular_interval_s);
-
-            // Resume Scanning
+            intv=BASE_ADV_INTERVAL_S+(rand()%(JITTER_S+1));
+            next_regular_burst_epoch=time(NULL)+intv;
+            schedule_ap_burst(intv,0);
             usleep(50000);
-            if (!is_scanning && !is_advertising)
-            {
-                if (set_scan_enable(device, true, false) == 0)
-                {
-                    is_scanning = true;
-                }
-                else
-                {
-                    fprintf(stderr, "AP: Error: Failed to re-enable scan\n");
-                    sleep(1);
-                }
-            }
         }
 
-        // Ensure Scan is Active
-        if (!is_scanning && !is_advertising)
+        if(!scanning && !advertising)
         {
-            if (set_scan_enable(device, true, false) == 0)
-            {
-                is_scanning = true;
-            }
-            else
-            {
-                fprintf(stderr, "AP: Error: Failed to enable scan, retrying later\n");
-                sleep(1);
-            }
+            if(set_ext_scan_enable(device,true,false)==0) scanning=true;
+            else { perror("scan enable"); sleep(1);}
         }
 
-        // Process packets if scanning
-        if (is_scanning)
+        if(scanning)
         {
             uint8_t buf[HCI_MAX_EVENT_SIZE];
-            // Inner loop to read all available packets quickly
-            while (is_scanning)
-            { // Check state again in case adv burst interrupted
-                int len = read(device, buf, sizeof(buf));
-                if (len < 0)
-                {
-                    if (errno == EAGAIN || errno == EWOULDBLOCK)
-                    {
-                        break; // No more data now
-                    }
-                    else
-                    {
-                        perror("AP: HCI read error");
-                        set_scan_enable(device, false, false);
-                        is_scanning = false;
-                        sleep(1);
-                        break;
-                    }
-                }
-                else if (len > 0)
-                {
-                    process_scan_packet(buf, len); // Process received packet
-                }
-                else
-                {
-                    break;
-                } // read() returned 0
+            while(scanning)
+            {
+                int n=read(device,buf,sizeof(buf));
+                if(n<0){ if(errno==EAGAIN) break;
+                         perror("read"); set_ext_scan_enable(device,false,false); scanning=false; break; }
+                else if(n>0) process_scan_packet(buf,n);
+                else break;
             }
         }
-
-        // Yield CPU slightly, especially if read() loop was short (no data)
-        usleep(1000); // 1ms
-
-    } // End while(1)
-
-ap_cleanup:
-    printf("AP: Cleaning up and closing HCI device.\n");
-    schedule_ap_burst(0, 0); // Cancel timer
-    if (device >= 0)
-    {
-        set_scan_enable(device, false, false);
-        set_advertise_enable(device, false);
-        hci_close_dev(device);
+        usleep(1000);
     }
-    printf("AP: Exiting\n");
-    return shutdown_requested ? 0 : 1;
+
+exit:
+    schedule_ap_burst(0,0);
+    set_ext_scan_enable(device,false,false);
+    set_ext_adv_enable(device,false);
+    if(device>=0) hci_close_dev(device);
+    return 0;
 }
