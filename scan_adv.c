@@ -163,27 +163,26 @@ static struct hci_request hci_req(uint16_t ocf,int clen,void *status,void *cp)
 
 /* ─────────── 4.  EXT-ADVERTISER HELPERS ────────────────────────────── */
 
-static int set_static_adv_addr(int dev, const char *str_addr)
+static int set_static_adv_addr(int dev, uint8_t handle, const char *str_addr)
 {
-    bdaddr_t a;
+    struct {
+        uint8_t handle;
+        uint8_t addr[6];
+    } __attribute__((packed)) cp;
     uint8_t status;
 
-    if (str2ba(str_addr, &a) < 0)
+    cp.handle = handle;
+    if (str2ba(str_addr, (bdaddr_t *)cp.addr) < 0)
     {
         fprintf(stderr, "bad addr %s\n", str_addr);
-        return -1;
+        return -1; 
     }
-
-    uint8_t cp[6];
-    for (int i = 0; i < 6; i++)
-    {
-        cp[i] = a.b[i];
-    }
+    
 
     struct hci_request rq = {
         .ogf = OGF_LE_CTL,
-        .ocf = OCF_LE_SET_RANDOM_ADDRESS,
-        .cparam = cp,
+        .ocf = 0x0035,
+        .cparam = &cp,
         .clen = sizeof(cp),
         .rparam = &status,
         .rlen = 1
@@ -525,7 +524,7 @@ int main(void)
     int fl=fcntl(device,F_GETFL,0); fcntl(device,F_SETFL,fl|O_NONBLOCK);
 
     // Set random address
-    if (set_static_adv_addr(device, "C2:0D:8E:96:F8:23") < 0)
+    if (set_static_adv_addr(device, 0x00, "C0:54:52:53:00:00") < 0)
     {
         perror("Set random static addr");
         goto exit; 
