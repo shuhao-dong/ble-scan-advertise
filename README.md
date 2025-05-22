@@ -10,3 +10,12 @@ Please follow the instructions in the above link to install necessary libraries
 
 ## Test Platform
 Raspberry Pi 5 running Debian GNU/Linux version 12
+
+## Install Dependencies
+
+You have to install the following libraries before you can use this code
+
+    sudo apt-get install libssl-dev libbluetooth-dev
+
+Use with this firmware version to receive the extended advertisement packets: https://github.com/shuhao-dong/BORUS/tree/feature/ext-adv-sync
+
