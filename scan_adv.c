@@ -476,16 +476,16 @@ static void process_scan_packet(uint8_t *buf, int len)
                     off += 4; 
                 }
                 
-                // printf("  DECRYPT OK  temp=%dC  press=%.1fhPa  batt=%u%%  samples=%u\n",
-                //        tempC, press, batt, number_of_batch);
+                printf("  DECRYPT OK  temp=%dC  press=%.1fhPa  batt=%u%%  samples=%u\n",
+                       tempC, press, batt, number_of_batch);
                 
                 for (uint8_t i = 0; i < number_of_batch; i++)
                 {
-                    // printf("    #%02u   ts=%u   ACC[%.2f, %.2f, %.2f]   GYR[%.2f, %.2f, %.2f]\n",
-                    // i,
-                    // samples[i].ts, 
-                    // samples[i].v[0]/100.0f, samples[i].v[1]/100.0f, samples[i].v[2]/100.0f,
-                    // samples[i].v[3]/100.0f, samples[i].v[4]/100.0f, samples[i].v[5]/100.0f); 
+                    printf("    #%02u   ts=%u   ACC[%.2f, %.2f, %.2f]   GYR[%.2f, %.2f, %.2f]\n",
+                    i,
+                    samples[i].ts, 
+                    samples[i].v[0]/100.0f, samples[i].v[1]/100.0f, samples[i].v[2]/100.0f,
+                    samples[i].v[3]/100.0f, samples[i].v[4]/100.0f, samples[i].v[5]/100.0f); 
                 }
             } else {
                 printf("  Decrypt FAILED\n");
@@ -508,7 +508,6 @@ static void process_scan_packet(uint8_t *buf, int len)
         acc_len = 0;
     }
 }
-
 
 /* ─────────── 9.  MAIN LOOP ─────────────────────────────────────────── */
 
