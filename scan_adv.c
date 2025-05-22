@@ -511,14 +511,41 @@ static void process_scan_packet(uint8_t *buf, int len)
 
 /* ─────────── 9.  MAIN LOOP ─────────────────────────────────────────── */
 
-int main(void)
+int main(int argc, char *argv[])
 {
     srand(time(NULL));
     signal(SIGINT,  term_handler);
     signal(SIGTERM, term_handler);
     signal(SIGALRM, alarm_handler);
 
-    device=hci_open_dev(1); if(device<0) device=hci_open_dev(0);
+    // Choose which HCI device to open
+    int wanted_dev = -1;
+
+    if (argc > 1)
+    {
+        char *endp;
+        wanted_dev = strtol(argv[1], &endp, 10);
+        if (*endp || wanted_dev < 0)
+        {
+            fprintf(stderr, 
+                "Usage: %s [hci_index]\n"
+                "   (omit hci_index to auto-probe)\n", argv[0]);
+            return 1; 
+        }
+    }
+    
+    if (wanted_dev >= 0)
+    {
+        device = hci_open_dev(wanted_dev);
+    } else {
+        device = hci_open_dev(1);
+        if (device < 0)
+        {
+            device = hci_open_dev(0);
+        }
+        
+    }
+
     if(device<0){perror("hci_open_dev");return 1;}
     int fl=fcntl(device,F_GETFL,0); fcntl(device,F_SETFL,fl|O_NONBLOCK);
 
