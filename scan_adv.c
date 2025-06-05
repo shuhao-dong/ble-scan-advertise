@@ -5,7 +5,7 @@
  *  • Passive **extended** scanner for BORUS wearable
  *  • Periodic heartbeat broadcaster (legacy PDU via ext-adv cmds)
  *
- *  Compile:  gcc scan_adv_ext.c -o scan_adv_ext -lbluetooth -lssl -lcrypto
+ *  Compile:  cc scan_adv_ext.c -o scan_adv_ext -lbluetooth -lssl -lcrypto
  */
 
 #define _GNU_SOURCE
@@ -42,7 +42,7 @@ static const char target_mac[] = "EE:93:96:3C:66:B5"; /* BORUS wearable */
 #define SENSOR_ADV_PAYLOAD_TYPE 0x00
 #define AWAY_ADV_PAYLOAD_TYPE 0x01
 
-#define SENSOR_DATA_PACKET_SIZE 229
+#define SENSOR_DATA_PACKET_SIZE 230
 #define NONCE_LEN 8
 #define SENSOR_PAYLOAD_DATA_LEN (NONCE_LEN + SENSOR_DATA_PACKET_SIZE)
 #define SYNC_REQ_PAYLOAD_DATA_LEN 2
@@ -530,6 +530,9 @@ static void process_scan_packet(uint8_t *buf, int len)
                 // Battery
                 uint8_t batt = plain[off++];
 
+                // SoC temperature
+                int8_t soc_temp = plain[off++]; 
+
                 // Number of IMU batch
                 uint8_t number_of_batch = plain[off++];
 
@@ -555,8 +558,8 @@ static void process_scan_packet(uint8_t *buf, int len)
                     off += 4;
                 }
 
-                printf("  DECRYPT OK  temp=%dC  press=%.1fhPa  batt=%u%%  samples=%u\n",
-                       tempC, press, batt, number_of_batch);
+                printf("  DECRYPT OK  temp=%dC  press=%.1fhPa  batt=%u%%  SoC=%dC  samples=%u\n",
+                       tempC, press, batt, soc_temp, number_of_batch);
 
                 for (uint8_t i = 0; i < number_of_batch; i++)
                 {
