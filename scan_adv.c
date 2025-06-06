@@ -5,7 +5,7 @@
  *  • Passive **extended** scanner for BORUS wearable
  *  • Periodic heartbeat broadcaster (legacy PDU via ext-adv cmds)
  *
- *  Compile:  cc scan_adv_ext.c -o scan_adv_ext -lbluetooth -lssl -lcrypto
+ *  Compile:  cc scan_adv.c -o scan -lbluetooth -lssl -lcrypto
  */
 
 #define _GNU_SOURCE
@@ -32,6 +32,7 @@
 /* ───────────────────── 1.  APPLICATION CONFIG ───────────────────────── */
 
 static const char target_mac[] = "EE:93:96:3C:66:B5"; /* BORUS wearable */
+static const char random_ble_addr[] = "C0:54:52:53:00:00";
 
 #define BASE_ADV_INTERVAL_S 60
 #define JITTER_S 5
@@ -528,7 +529,7 @@ static void process_scan_packet(uint8_t *buf, int len)
                 float press = (po + PRESSURE_BASE_HPA_X10) / 10.0f;
 
                 // Battery
-                uint8_t batt = plain[off++];
+                int batt = plain[off++] * 20;
 
                 // SoC temperature
                 int8_t soc_temp = plain[off++]; 
@@ -558,7 +559,7 @@ static void process_scan_packet(uint8_t *buf, int len)
                     off += 4;
                 }
 
-                printf("  DECRYPT OK  temp=%dC  press=%.1fhPa  batt=%u%%  SoC=%dC  samples=%u\n",
+                printf("  DECRYPT OK  temp=%dC  press=%.1fhPa  batt=%dmV  SoC=%dC  samples=%u\n",
                        tempC, press, batt, soc_temp, number_of_batch);
 
                 for (uint8_t i = 0; i < number_of_batch; i++)
@@ -642,7 +643,7 @@ int main(int argc, char *argv[])
     fcntl(device, F_SETFL, fl | O_NONBLOCK);
 
     // Set random address
-    if (set_static_adv_addr(device, 0x00, "C0:54:52:53:00:00") < 0)
+    if (set_static_adv_addr(device, 0x00, random_ble_addr) < 0)
     {
         perror("Set random static addr");
         goto exit;
