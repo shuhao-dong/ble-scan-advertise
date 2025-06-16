@@ -71,7 +71,6 @@ static const unsigned char aes_key[16] = {
 static volatile sig_atomic_t shutdown_requested = 0;
 static volatile sig_atomic_t trigger_ap_burst_now = 0;
 
-static struct itimerval next_burst_timer;
 static time_t next_regular_burst_epoch = 0;
 
 static int device = -1; /* HCI socket handle    */
@@ -588,6 +587,7 @@ static void process_scan_packet(uint8_t *buf, int len)
             }
 
             schedule_ap_burst(trig_us / 1000000L, trig_us % 1000000L);
+            next_regular_burst_epoch = time(NULL) + (trig_us / 1000000L); 
         }
 
         /*  reset accumulator for next advertising event               */
@@ -660,10 +660,6 @@ int main(int argc, char *argv[])
     hci_filter_set_event(EVT_LE_META_EVENT, &flt);
     setsockopt(device, SOL_HCI, HCI_FILTER, &flt, sizeof(flt));
 
-    int intv = BASE_ADV_INTERVAL_S + (rand() % (JITTER_S + 1));
-    next_regular_burst_epoch = time(NULL) + intv;
-    schedule_ap_burst(intv, 0);
-
     bool scanning = false, advertising = false;
 
     while (!shutdown_requested)
@@ -691,9 +687,6 @@ int main(int argc, char *argv[])
             printf("==================== AP burst Finished (%.1f s) ===================== \n",
                    ADV_BURST_DURATION_MS / 1000.0);
 
-            intv = BASE_ADV_INTERVAL_S + (rand() % (JITTER_S + 1));
-            next_regular_burst_epoch = time(NULL) + intv;
-            schedule_ap_burst(intv, 0);
             usleep(50000);
         }
 
