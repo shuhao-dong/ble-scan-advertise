@@ -6,7 +6,7 @@ check_scanner.py       verify that the C scanner subprocess
 
 import json, subprocess, pprint, signal, sys
 
-SCANNER = "./scan_pub"          # path to your compiled C programme
+SCANNER = "./scan"          # path to your compiled C programme
 running = True
 
 def stop(sig, frame):

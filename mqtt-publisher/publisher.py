@@ -1,9 +1,9 @@
 import json, subprocess, sys, signal, time
 import paho.mqtt.client as mqtt
 
-BROKER = "192.168.1.100"
-TOPIC = "borus/sensor"
-SCANNER = "./scan_pub"
+BROKER = "192.168.88.251"
+TOPIC = "demo"
+SCANNER = "./scan"
 
 running = True
 
