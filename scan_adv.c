@@ -174,7 +174,55 @@ static struct hci_request hci_req(uint16_t ocf, int clen, void *status, void *cp
     return rq;
 }
 
-/* ─────────── 4.  EXT-ADVERTISER HELPERS ────────────────────────────── */
+/* ─────────── 4.  TO JSON HELPERS        ────────────────────────────── */
+
+#define JSON_BUF 2048
+
+typedef struct
+{                 /* we already declared this in the file */
+    int16_t v[6]; /* aX,aY,aZ,gX,gY,gZ ×100              */
+    uint32_t ts;  /* sample-relative timestamp            */
+} imu_payload_t;
+
+static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
+                           int batt_mV, int soc_deg,
+                           uint8_t n, const imu_payload_t *s)
+{
+    char buf[JSON_BUF];
+    char *p = buf;
+    int left = JSON_BUF;
+
+    int w = snprintf(p, left,
+                     "{\"rssi\":%d,"
+                     "\"temp\":%d,"
+                     "\"press\":%.1f,"
+                     "\"batt\":%d,"
+                     "\"soc\":%d,"
+                     "\"samples\":[",
+                     rssi, tempC, press_hPa, batt_mV, soc_deg);
+    p += w;
+    left -= w;
+
+    for (uint8_t i = 0; i < n && left > 0; i++)
+    {
+        const imu_payload_t *sp = &s[i];
+        w = snprintf(p, left,
+                     "%s{\"ts\":%u,"
+                     "\"ax\":%.2f,\"ay\":%.2f,\"az\":%.2f,"
+                     "\"gx\":%.2f,\"gy\":%.2f,\"gz\":%.2f}",
+                     (i ? "," : ""),
+                     sp->ts,
+                     sp->v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f,
+                     sp->v[3] / 100.0f, sp->v[4] / 100.0f, sp->v[5] / 100.0f);
+        p += w;
+        left -= w;
+    }
+    snprintf(p, left, "]}\n");
+    fputs(buf, stdout); /* single JSON line  */
+    fflush(stdout);     /* flush to the pipe */
+}
+
+/* ─────────── 5.  EXT-ADVERTISER HELPERS ────────────────────────────── */
 
 static int set_static_adv_addr(int dev, uint8_t handle, const char *str_addr)
 {
@@ -446,13 +494,6 @@ static void process_scan_packet(uint8_t *buf, int len)
         if (strcmp(addr_str, target_mac))
             continue;
 
-        /* ---------- DEBUG: show fragment info ---------------------- */
-        struct timeval tv;
-        gettimeofday(&tv, NULL);
-        printf("%ld.%06ld  RSSI %d  SID %u  dataStatus=%u  len=%u\n",
-               (long)tv.tv_sec, (long)tv.tv_usec,
-               rssi, sid, (evt_type >> 13) & 0x03, adv_len);
-
         /* ---------- (re)start accumulator if new addr/SID ---------- */
         if (bacmp(&addr, &acc_addr) || sid != acc_sid)
         {
@@ -478,13 +519,6 @@ static void process_scan_packet(uint8_t *buf, int len)
         if (field_type != 0xFF || acc_len < field_len + 1)
             continue;
 
-        /* ---------- DEBUG: dump first 10 bytes of manufacturer ----- */
-        printf("  Manufacturer block complete (%u bytes). First 10: ",
-               field_len);
-        for (int i = 0; i < 10 && i < field_len - 1; i++)
-            printf("%02x ", acc_data[2 + i]);
-        printf("\n");
-
         /*  Now parse manufacturer payload --------------------------- */
         uint8_t *pay_start = &acc_data[2]; // This is custom type | nonce | sensor data
         uint8_t pay_len = field_len - 1;   // This is the length of custom type | nonce | sensor data
@@ -502,7 +536,7 @@ static void process_scan_packet(uint8_t *buf, int len)
             continue;
         }
 
-        printf("  ptype=%u  plen=%u\n", ptype, plen);
+        // printf("  ptype=%u  plen=%u\n", ptype, plen);
 
         if (ptype == SENSOR_ADV_PAYLOAD_TYPE &&
             plen == SENSOR_PAYLOAD_DATA_LEN)
@@ -537,12 +571,6 @@ static void process_scan_packet(uint8_t *buf, int len)
                 uint8_t number_of_batch = plain[off++];
 
                 // IMU Batch
-                typedef struct
-                {
-                    int16_t v[6];
-                    uint32_t ts;
-                } imu_payload_t;
-
                 imu_payload_t samples[MAX_IMU_SAMPLES_IN_PACKET];
 
                 if (number_of_batch > MAX_IMU_SAMPLES_IN_PACKET)
@@ -558,17 +586,9 @@ static void process_scan_packet(uint8_t *buf, int len)
                     off += 4;
                 }
 
-                printf("  DECRYPT OK  temp=%dC  press=%.1fhPa  batt=%dmV  SoC=%dC  samples=%u\n",
-                       tempC, press, batt, soc_temp, number_of_batch);
+                emit_json_full(rssi, tempC, press, batt, soc_temp,
+                               number_of_batch, samples);
 
-                for (uint8_t i = 0; i < number_of_batch; i++)
-                {
-                    printf("    #%02u   ts=%u   ACC[%.2f, %.2f, %.2f]   GYR[%.2f, %.2f, %.2f]\n",
-                           i,
-                           samples[i].ts,
-                           samples[i].v[0] / 100.0f, samples[i].v[1] / 100.0f, samples[i].v[2] / 100.0f,
-                           samples[i].v[3] / 100.0f, samples[i].v[4] / 100.0f, samples[i].v[5] / 100.0f);
-                }
             }
             else
             {
@@ -578,7 +598,7 @@ static void process_scan_packet(uint8_t *buf, int len)
         else if (ptype == AWAY_ADV_PAYLOAD_TYPE && plen == SYNC_REQ_PAYLOAD_DATA_LEN)
         {
             uint16_t delay_s = payload[0] | (payload[1] << 8);
-            printf("SYNC-REQ wearable scans in %u s\n", delay_s);
+            // printf("SYNC-REQ wearable scans in %u s\n", delay_s);
 
             long trig_us = (long)delay_s * 1000000L - (long)RPI_SAFETY_MARGIN_MS * 1000L;
             if (trig_us < 50000)
@@ -668,8 +688,6 @@ int main(int argc, char *argv[])
         {
             trigger_ap_burst_now = 0;
 
-            printf("===================== AP burst TIMER fired: start advertising ==================== \n");
-
             int tcs = time_to_next_cs();
             if (scanning)
             {
@@ -683,9 +701,6 @@ int main(int argc, char *argv[])
             usleep(ADV_BURST_DURATION_MS * 1000);
             set_ext_adv_enable(device, false);
             advertising = false;
-
-            printf("==================== AP burst Finished (%.1f s) ===================== \n",
-                   ADV_BURST_DURATION_MS / 1000.0);
 
             usleep(50000);
         }
