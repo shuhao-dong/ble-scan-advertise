@@ -2,4 +2,3 @@
 ~.json
 
 mqtt-publisher/.venv/
-scan_pub
