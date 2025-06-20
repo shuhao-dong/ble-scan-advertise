@@ -5,7 +5,7 @@
  *  • Passive **extended** scanner for BORUS wearable
  *  • Periodic heartbeat broadcaster (legacy PDU via ext-adv cmds)
  *
- *  Compile:  cc scan_adv.c -o scan -lbluetooth -lssl -lcrypto
+ *  Compile:  cc scan_adv.c -o scan -lbluetooth -lssl -lcrypto -lmosquitto
  */
 
 #define _GNU_SOURCE
@@ -28,17 +28,19 @@
 #include <openssl/evp.h>
 #include <openssl/err.h>
 #include <openssl/aes.h>
+#include <mosquitto.h>
 
 /* ───────────────────── 1.  APPLICATION CONFIG ───────────────────────── */
 
 static const char target_mac[] = "EE:93:96:3C:66:B5"; /* BORUS wearable */
 static const char random_ble_addr[] = "C0:54:52:53:00:00";
 
-#define BASE_ADV_INTERVAL_S 60
-#define JITTER_S 5
+#define BROKER_ADDR "192.168.1.100"
+#define BROKER_PORT 1883
+#define MQTT_TOPIC  "borus/wearable"
+
 #define ADV_BURST_DURATION_MS 3000
 #define BORUS_COMPANY_ID 0x0059
-#define TIME_FIELD_UNIT_MS 10
 
 #define SENSOR_ADV_PAYLOAD_TYPE 0x00
 #define AWAY_ADV_PAYLOAD_TYPE 0x01
@@ -74,6 +76,8 @@ static volatile sig_atomic_t trigger_ap_burst_now = 0;
 static time_t next_regular_burst_epoch = 0;
 
 static int device = -1; /* HCI socket handle    */
+
+static struct mosquitto *mq = NULL; 
 
 /* ─────────── 3.  HCI COMMAND DEFINITIONS ────────────────────────────── */
 
@@ -174,6 +178,58 @@ static struct hci_request hci_req(uint16_t ocf, int clen, void *status, void *cp
     return rq;
 }
 
+/* ─────────── 4.  MQTT HELPERS        ────────────────────────────── */
+
+static int mqtt_init(void)
+{
+    mosquitto_lib_init();
+    mq = mosquitto_new("borus-publisher", true, NULL);
+
+    if (!mq)
+    {
+        fprintf(stderr, "mosquitto_new failed\n");
+        return -1;
+    }
+
+    if (mosquitto_connect(mq, BROKER_ADDR, BROKER_PORT, 60))
+    {
+        fprintf(stderr, "Unable to connect to MQTT broker %s: %d\n", BROKER_ADDR, BROKER_PORT);
+        return -1;
+    }
+
+    if (mosquitto_loop_start(mq))
+    {
+        fprintf(stderr, "mosquitto_loop_start failed\n");
+        return -1;
+    }
+    
+    return 0;
+}
+
+static void mqtt_cleanup(void)
+{
+    if (!mq)
+    {
+        return;
+    }
+    
+    mosquitto_loop_stop(mq, true);
+    mosquitto_disconnect(mq);
+    mosquitto_destroy(mq);
+    mosquitto_lib_cleanup();
+    mq = NULL; 
+}
+
+static void mqtt_publish_json(const char *js)
+{
+    if (!mq)
+    {
+        return;
+    }
+
+    mosquitto_publish(mq, NULL, MQTT_TOPIC, (int)strlen(js), js, 0, false); 
+}
+
 /* ─────────── 4.  TO JSON HELPERS        ────────────────────────────── */
 
 #define JSON_BUF 2048
@@ -218,8 +274,11 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
         left -= w;
     }
     snprintf(p, left, "]}\n");
+    
     fputs(buf, stdout); /* single JSON line  */
     fflush(stdout);     /* flush to the pipe */
+
+    mqtt_publish_json(buf); 
 }
 
 /* ─────────── 5.  EXT-ADVERTISER HELPERS ────────────────────────────── */
@@ -662,6 +721,12 @@ int main(int argc, char *argv[])
     int fl = fcntl(device, F_GETFL, 0);
     fcntl(device, F_SETFL, fl | O_NONBLOCK);
 
+    if (mqtt_init() < 0)
+    {
+        fprintf(stderr, "Failed to initialise MQTT - continuing without publish\n"); 
+    }
+    
+
     // Set random address
     if (set_static_adv_addr(device, 0x00, random_ble_addr) < 0)
     {
@@ -745,6 +810,9 @@ exit:
     set_ext_scan_enable(device, false, false);
     set_ext_adv_enable(device, false);
     if (device >= 0)
+    {
         hci_close_dev(device);
+    }
+    mqtt_cleanup(); 
     return 0;
 }
