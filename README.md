@@ -15,7 +15,7 @@ Raspberry Pi 5 running Debian GNU/Linux version 12, with Python 3.11.2
 
 You have to install the following libraries before you can use the source code scan_adv.c
 
-    sudo apt-get install libssl-dev libbluetooth-dev
+    sudo apt-get install libssl-dev libbluetooth-dev libmosquitto-dev mosquitto-clients
 
 Use with this firmware version to receive the extended advertisement packets: https://github.com/shuhao-dong/BORUS/tree/feature/ext-adv-sync
 
