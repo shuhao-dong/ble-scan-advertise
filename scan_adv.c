@@ -191,7 +191,7 @@ static int mqtt_init(void)
         return -1;
     }
 
-    if (mosquitto_connect(mq, BROKER_ADDR, BROKER_PORT, 60))
+    if (mosquitto_connect_async(mq, BROKER_ADDR, BROKER_PORT, 60))
     {
         fprintf(stderr, "Unable to connect to MQTT broker %s: %d\n", BROKER_ADDR, BROKER_PORT);
         return -1;
@@ -726,7 +726,6 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Failed to initialise MQTT - continuing without publish\n"); 
     }
     
-
     // Set random address
     if (set_static_adv_addr(device, 0x00, random_ble_addr) < 0)
     {
