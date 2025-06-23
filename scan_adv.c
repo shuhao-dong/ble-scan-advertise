@@ -346,9 +346,7 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
                  "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
                  "{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},"
                  "{\"property\":\"pressure\",\"value\":%.1f,\"unit\":\"hPa\"},"
-                 "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
-                 "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},",
-                 rssi, tempC, press_hPa, batt_mV, soc_deg);
+                 rssi, tempC, press_hPa);
     p += w;
     left -= w;
 
@@ -373,6 +371,20 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
         p += w;
         left -= w;
     }
+
+    w = snprintf(p, left,
+                 "],\"monitoring\":[");
+    p += w;
+    left -= w;
+
+    w = snprintf(p, left,
+             "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
+             "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},",
+             batt_mV, soc_deg);
+
+    p += w;
+    left -= w;
+
     snprintf(p, left, "]}\n");
 
     fputs(buf, stdout);
