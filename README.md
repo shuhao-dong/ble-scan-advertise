@@ -17,8 +17,6 @@ You have to install the following libraries before you can use the source code s
 
     sudo apt-get install libssl-dev libbluetooth-dev libmosquitto-dev mosquitto-clients
 
-Use with this firmware version to receive the extended advertisement packets: https://github.com/shuhao-dong/BORUS/tree/feature/ext-adv-sync
-
 Under the directory mqtt-publisher, there are two python files that: 
 
 (1) Test C wrapper subprocess
@@ -29,4 +27,5 @@ To run either python, you will need to install the mqtt library in your virtual 
     pip install paho-mqtt
 
 
-
+## JSON Schema for Wearable Packets
+This schema defines the structure of MQTT messages sent by the BLE scanner: https://github.com/talliskinrade/torus_wearable_packet.git

@@ -180,6 +180,9 @@ static struct hci_request hci_req(uint16_t ocf, int clen, void *status, void *cp
 
 /* ─────────── 4.  MQTT HELPERS        ────────────────────────────── */
 
+/**
+ * Initialize the MQTT library and create a new client instance.
+ */
 static int mqtt_init(void)
 {
     mosquitto_lib_init();
@@ -206,6 +209,9 @@ static int mqtt_init(void)
     return 0;
 }
 
+/**
+ * Clean up the MQTT client and library.
+ */
 static void mqtt_cleanup(void)
 {
     if (!mq)
@@ -220,6 +226,9 @@ static void mqtt_cleanup(void)
     mq = NULL; 
 }
 
+/**
+ * Publish a JSON formatted string to the MQTT topic.
+ */
 static void mqtt_publish_json(const char *js)
 {
     if (!mq)
@@ -230,7 +239,7 @@ static void mqtt_publish_json(const char *js)
     mosquitto_publish(mq, NULL, MQTT_TOPIC, (int)strlen(js), js, 0, false); 
 }
 
-/* ─────────── 4.  TO JSON HELPERS        ────────────────────────────── */
+/* ─────────── 5.  TO JSON HELPERS        ────────────────────────────── */
 
 #define JSON_BUF 2048
 
@@ -240,6 +249,18 @@ typedef struct
     uint32_t ts;  /* sample-relative timestamp            */
 } imu_payload_t;
 
+/**
+ * Emit JSON formatted data to JSON and publish to MQTT.
+ * 
+ * @param rssi       Received Signal Strength Indicator
+ * @param tempC      Temperature in degrees Celsius
+ * @param press_hPa  Pressure in hectopascals
+ * @param batt_mV    Battery voltage in millivolts
+ * @param soc_deg    State of Charge in degrees Celsius
+ * @param n          Number of IMU samples
+ * @param s          Pointer to an array of imu_payload_t samples
+ * 
+ */
 static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
                            int batt_mV, int soc_deg,
                            uint8_t n, const imu_payload_t *s)
@@ -248,13 +269,24 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     char *p = buf;
     int left = JSON_BUF;
 
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    char timestamp[32];
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", tm);
+
     int w = snprintf(p, left,
-                     "{\"rssi\":%d,"
-                     "\"temp\":%d,"
-                     "\"press\":%.1f,"
-                     "\"batt\":%d,"
-                     "\"soc\":%d,"
-                     "\"samples\":[",
+        "{
+            "\"timestamp\":\"%s\","
+            "\"measurements\":[", timestamp);
+    p += w;
+    left -= w;  
+
+    int w = snprintf(p, left,
+                     "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
+                     "{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},"
+                     "{\"property\":\"pressure\",\"value\":%.1f,\"unit\":\"hPa\"},"
+                     "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
+                     "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},",
                      rssi, tempC, press_hPa, batt_mV, soc_deg);
     p += w;
     left -= w;
@@ -263,26 +295,43 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     {
         const imu_payload_t *sp = &s[i];
         w = snprintf(p, left,
-                     "%s{\"ts\":%u,"
-                     "\"ax\":%.2f,\"ay\":%.2f,\"az\":%.2f,"
-                     "\"gx\":%.2f,\"gy\":%.2f,\"gz\":%.2f}",
-                     (i ? "," : ""),
+                    ",{\"property\":\"acceleration\","
+                    "\"value\":[%.2f,%.2f,%.2f],"
+                    "\"unit\":\"m/s^2\"},"
+                     "\"ts\":%u}",
                      sp->ts,
-                     sp->v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f,
+                     sp-v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f,);
+        p += w;
+        left -= w;
+
+        w = snprintf(p, left,
+                    ",{\"property\":\"gyroscope\","
+                    "\"value\":[%.2f,%.2f,%.2f],"
+                    "\"unit\":\"rad/s\"},"
+                     "\"ts\":%u}",
+                     sp->ts,
                      sp->v[3] / 100.0f, sp->v[4] / 100.0f, sp->v[5] / 100.0f);
         p += w;
         left -= w;
     }
     snprintf(p, left, "]}\n");
     
-    fputs(buf, stdout); /* single JSON line  */
-    fflush(stdout);     /* flush to the pipe */
+    fputs(buf, stdout); 
+    fflush(stdout);     
 
     mqtt_publish_json(buf); 
 }
 
-/* ─────────── 5.  EXT-ADVERTISER HELPERS ────────────────────────────── */
+/* ─────────── 6.  EXT-ADVERTISER HELPERS ────────────────────────────── */
 
+/**
+ * Set the static advertising address for the extended advertiser.
+ * 
+ * @param dev       HCI device handle
+ * @param handle    Advertising handle (0x00 for first set)
+ * @param str_addr  Address string in format "XX:XX:XX:XX:XX:XX"
+ * @return          0 on success, -1 on failure
+ */
 static int set_static_adv_addr(int dev, uint8_t handle, const char *str_addr)
 {
     struct
@@ -316,6 +365,12 @@ static int set_static_adv_addr(int dev, uint8_t handle, const char *str_addr)
     return 0;
 }
 
+/**
+ * Set the extended advertising parameters for the advertiser.
+ * 
+ * @param dev  HCI device handle
+ * @return     0 on success, -1 on failure
+ */
 static int set_ext_adv_params(int dev)
 {
     le_set_ext_adv_params_cp cp = {0};
@@ -339,6 +394,9 @@ static int set_ext_adv_params(int dev)
     return 0;
 }
 
+/**
+ * Set the extended advertising data with a time counter.
+ */
 static int set_ext_adv_data_time(int dev, uint16_t time_cs)
 {
     le_set_ext_adv_data_cp cp = {0};
@@ -364,6 +422,13 @@ static int set_ext_adv_data_time(int dev, uint16_t time_cs)
     return 0;
 }
 
+/**
+ * Enable or disable the extended advertising.
+ * 
+ * @param dev  HCI device handle
+ * @param en   true to enable, false to disable
+ * @return     0 on success, -1 on failure
+ */
 static int set_ext_adv_enable(int dev, bool en)
 {
     le_set_ext_adv_enable_cp cp = {0};
@@ -381,8 +446,14 @@ static int set_ext_adv_enable(int dev, bool en)
     return 0;
 }
 
-/* ─────────── 5.  EXT-SCANNER HELPERS ───────────────────────────────── */
+/* ─────────── 6.  EXT-SCANNER HELPERS ───────────────────────────────── */
 
+/**
+ * Set the extended scan parameters for the scanner.
+ * 
+ * @param dev  HCI device handle
+ * @return     0 on success, -1 on failure
+ */
 static int set_ext_scan_params(int dev)
 /* passive scan, 1 M PHY, 10 ms window */
 {
@@ -404,6 +475,14 @@ static int set_ext_scan_params(int dev)
     return 0;
 }
 
+/**
+ * Enable or disable the extended scanning.
+ * 
+ * @param dev        HCI device handle
+ * @param en         true to enable, false to disable
+ * @param filter_dup true to filter duplicate reports, false otherwise
+ * @return           0 on success, -1 on failure
+ */
 static int set_ext_scan_enable(int dev, bool en, bool filter_dup)
 {
     le_set_ext_scan_enable_cp cp = {0};
@@ -422,8 +501,18 @@ static int set_ext_scan_enable(int dev, bool en, bool filter_dup)
     return 0;
 }
 
-/* ─────────── 6.  AES-CTR DECRYPT (unchanged) ───────────────────────── */
+/* ─────────── 7.  AES-CTR DECRYPT (unchanged) ───────────────────────── */
 
+/**
+ * Decrypt a sensor data block using AES-CTR mode.
+ * 
+ * @param key     AES key (16 bytes)
+ * @param nonce   Nonce (8 bytes)
+ * @param cipher  Ciphertext (sensor data block, 230 bytes)
+ * @param plain   Output buffer for plaintext (230 bytes)
+ * 
+ * @return        0 on success, negative error code on failure
+ */
 static int decrypt_sensor_block_ap(const unsigned char *key,
                                    const uint8_t *nonce,
                                    const uint8_t *cipher,
@@ -466,7 +555,7 @@ done:
     return ret;
 }
 
-/* ─────────── 7.  SIGNALS & TIMERS ───────────────────────────────────── */
+/* ─────────── 8.  SIGNALS & TIMERS ───────────────────────────────────── */
 
 static void term_handler(int s)
 {
@@ -674,7 +763,7 @@ static void process_scan_packet(uint8_t *buf, int len)
     }
 }
 
-/* ─────────── 9.  MAIN LOOP ─────────────────────────────────────────── */
+/* ─────────── 10.  MAIN LOOP ─────────────────────────────────────────── */
 
 int main(int argc, char *argv[])
 {
