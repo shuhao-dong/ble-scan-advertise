@@ -10,4 +10,4 @@ Containing the collaborative documents created for the JSON Schema (Schema Defin
 Containing the JSON Schema (JSON_test.jsonc) and an example of what a packet from the borus wearable device looks like (Sample_Packet.jsonc).
 
 ## baseline_reading.c
-The baseline pressure reading published from the arduino.
+Publishes the baseline pressure reading from the arduino via MQTT.
