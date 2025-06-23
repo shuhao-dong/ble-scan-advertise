@@ -241,7 +241,7 @@ static void mqtt_publish_json(const char *js)
 
 /* ─────────── 5.  TO JSON HELPERS        ────────────────────────────── */
 
-#define JSON_BUF 2048
+#define JSON_BUF 4096
 
 typedef struct
 {                 /* we already declared this in the file */
@@ -281,7 +281,7 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     p += w;
     left -= w;  
 
-    int w = snprintf(p, left,
+    w = snprintf(p, left,
                      "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
                      "{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},"
                      "{\"property\":\"pressure\",\"value\":%.1f,\"unit\":\"hPa\"},"
