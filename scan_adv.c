@@ -35,7 +35,7 @@
 
 /* ───────────────────── 1.  APPLICATION CONFIG ───────────────────────── */
 
-static const char target_mac[] = "EE:93:96:3C:66:B5"; /* BORUS wearable */
+static const char target_mac[] = "EE:54:52:53:00:00"; /* BORUS wearable */
 static const char random_ble_addr[] = "C0:54:52:53:00:00";
 
 #define BROKER_ADDR "192.168.88.251"
@@ -179,6 +179,63 @@ static struct hci_request hci_req(uint16_t ocf, int clen, void *status, void *cp
     rq.rparam = status;
     rq.rlen = 1;
     return rq;
+}
+
+/* FAL (Filter Accept List) commands */
+#ifndef OCF_LE_CLEAR_FAL
+#define OCF_LE_CLEAR_FAL 0x0010
+#define OCF_LE_ADD_DEV_FAL 0x0011
+#else
+#define OCF_LE_CLEAR_FAL 0x002F
+#define OCF_LE_ADD_DEV_FAL 0x0030
+#endif
+
+/**
+ * Clear the Filter Accept List (FAL).
+ */
+static int fal_clear(int dev)
+{
+    uint8_t status;
+    struct hci_request rq = hci_req(OCF_LE_CLEAR_FAL, 0, &status, NULL);
+    if (hci_send_req(dev, &rq, 1000) < 0 || status)
+    {
+        fprintf(stderr, "LE Clear FAL failed (status 0x%02X)\n", status);
+        return -1;
+    }
+    return 0;
+}
+
+/**
+ * Add a device to the Filter Accept List (FAL).
+ *
+ * @param dev        HCI device handle
+ * @param addr_str   Address string in format "XX:XX:XX:XX:XX:XX"
+ * @param addr_type  Address type (0x00 for public, 0x01 for random)
+ * @return           0 on success, -1 on failure
+ */
+static int fal_add(int dev, const char *addr_str, uint8_t addr_type)
+{
+    struct
+    {
+        uint8_t addr_type;
+        bdaddr_t addr;
+    } __attribute__((packed)) cp;
+
+    if (str2ba(addr_str, &cp.addr) < 0)
+    {
+        fprintf(stderr, "bad addr %s\n", addr_str);
+        return -1;
+    }
+    cp.addr_type = addr_type;
+
+    uint8_t status;
+    struct hci_request rq = hci_req(OCF_LE_ADD_DEV_FAL, sizeof(cp), &status, &cp);
+    if (hci_send_req(dev, &rq, 1000) < 0 || status)
+    {
+        fprintf(stderr, "LE Add Dev FAL failed (status 0x%02X)\n", status);
+        return -1;
+    }
+    return 0;
 }
 
 /* ─────────── 4.  MQTT HELPERS        ────────────────────────────── */
@@ -473,7 +530,7 @@ static int set_ext_scan_params(int dev)
 {
     le_set_ext_scan_params_cp cp = {0};
     cp.own_addr_type = 0x00;
-    cp.scanning_filter_policy = 0x00;
+    cp.scanning_filter_policy = 0x01;       /* 0=accept all, 1=accept only FAL */
     cp.scanning_phys = LE_SCAN_PHY_1M;
     cp.phy_1m.scan_type = 0x00;              /* passive */
     cp.phy_1m.scan_interval = htobs(0x0010); /* 10 ms  */
@@ -836,6 +893,10 @@ int main(int argc, char *argv[])
     }
 
     if (set_ext_adv_params(device) < 0)
+        goto exit;
+    if (fal_clear(device) < 0)
+        goto exit;
+    if (fal_add(device, target_mac, 0x01) < 0)
         goto exit;
     if (set_ext_scan_params(device) < 0)
         goto exit;
