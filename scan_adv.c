@@ -35,7 +35,7 @@
 
 /* ───────────────────── 1.  APPLICATION CONFIG ───────────────────────── */
 
-static const char target_mac[] = "D0:54:52:53:00:00"; /* BORUS wearable */
+static const char target_mac[] = "EE:54:52:53:00:00"; /* BORUS wearable */
 static const char random_ble_addr[] = "C0:54:52:53:00:00";
 
 #define BROKER_ADDR "192.168.88.251"
