@@ -272,7 +272,7 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
     char timestamp[32];
-    strftime(timestamp, sizeof(timestamp), "Y-m-%dTH:M:%SZ", tm);
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", tm);
 
     int w = snprintf(p, left,
         "{"
