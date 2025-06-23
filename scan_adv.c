@@ -5,7 +5,7 @@
  *  • Passive **extended** scanner for BORUS wearable
  *  • Periodic heartbeat broadcaster (legacy PDU via ext-adv cmds)
  *
- *  Compile:  cc scan_adv.c -o scan -lbluetooth -lssl -lcrypto
+ *  Compile:  cc scan_adv.c -o ~/scan -lbluetooth -lssl -lcrypto
  */
 
 #define _GNU_SOURCE
