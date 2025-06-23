@@ -37,7 +37,7 @@ static const char random_ble_addr[] = "C0:54:52:53:00:00";
 
 #define BROKER_ADDR "192.168.88.251"
 #define BROKER_PORT 1883
-#define MQTT_TOPIC  "borus/wearable"
+#define MQTT_TOPIC "borus/wearable"
 
 #define ADV_BURST_DURATION_MS 3000
 #define BORUS_COMPANY_ID 0x0059
@@ -77,7 +77,7 @@ static time_t next_regular_burst_epoch = 0;
 
 static int device = -1; /* HCI socket handle    */
 
-static struct mosquitto *mq = NULL; 
+static struct mosquitto *mq = NULL;
 
 /* ─────────── 3.  HCI COMMAND DEFINITIONS ────────────────────────────── */
 
@@ -205,7 +205,7 @@ static int mqtt_init(void)
         fprintf(stderr, "mosquitto_loop_start failed\n");
         return -1;
     }
-    
+
     return 0;
 }
 
@@ -218,12 +218,12 @@ static void mqtt_cleanup(void)
     {
         return;
     }
-    
+
     mosquitto_loop_stop(mq, true);
     mosquitto_disconnect(mq);
     mosquitto_destroy(mq);
     mosquitto_lib_cleanup();
-    mq = NULL; 
+    mq = NULL;
 }
 
 /**
@@ -236,7 +236,7 @@ static void mqtt_publish_json(const char *js)
         return;
     }
 
-    mosquitto_publish(mq, NULL, MQTT_TOPIC, (int)strlen(js), js, 0, false); 
+    mosquitto_publish(mq, NULL, MQTT_TOPIC, (int)strlen(js), js, 0, false);
 }
 
 /* ─────────── 5.  TO JSON HELPERS        ────────────────────────────── */
@@ -251,7 +251,7 @@ typedef struct
 
 /**
  * Emit JSON formatted data to JSON and publish to MQTT.
- * 
+ *
  * @param rssi       Received Signal Strength Indicator
  * @param tempC      Temperature in degrees Celsius
  * @param press_hPa  Pressure in hectopascals
@@ -259,7 +259,7 @@ typedef struct
  * @param soc_deg    State of Charge in degrees Celsius
  * @param n          Number of IMU samples
  * @param s          Pointer to an array of imu_payload_t samples
- * 
+ *
  */
 static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
                            int batt_mV, int soc_deg,
@@ -275,19 +275,20 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     strftime(timestamp, sizeof(timestamp), "Y-m-%dTH:M:%SZ", tm);
 
     int w = snprintf(p, left,
-        "{"
-            "\"timestamp\":\"%s\","
-            "\"measurements\":[", timestamp);
+                     "{"
+                     "\"timestamp\":\"%s\","
+                     "\"measurements\":[",
+                     timestamp);
     p += w;
-    left -= w;  
+    left -= w;
 
     w = snprintf(p, left,
-                     "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
-                     "{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},"
-                     "{\"property\":\"pressure\",\"value\":%.1f,\"unit\":\"hPa\"},"
-                     "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
-                     "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},",
-                     rssi, tempC, press_hPa, batt_mV, soc_deg);
+                 "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
+                 "{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},"
+                 "{\"property\":\"pressure\",\"value\":%.1f,\"unit\":\"hPa\"},"
+                 "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
+                 "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},",
+                 rssi, tempC, press_hPa, batt_mV, soc_deg);
     p += w;
     left -= w;
 
@@ -295,36 +296,36 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     {
         const imu_payload_t *sp = &s[i];
         w = snprintf(p, left,
-                    ",{\"property\":\"acceleration\","
-                    "\"value\":[%.2f,%.2f,%.2f],"
-                    "\"unit\":\"m/s^2\"},"
+                     ",{\"property\":\"acceleration\","
+                     "\"value\":[%.2f,%.2f,%.2f],"
+                     "\"unit\":\"m/s^2\","
                      "\"ts\":%u}",
                      sp->v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f, sp->ts);
         p += w;
         left -= w;
 
         w = snprintf(p, left,
-                    ",{\"property\":\"gyroscope\","
-                    "\"value\":[%.2f,%.2f,%.2f],"
-                    "\"unit\":\"rad/s\"},"
+                     ",{\"property\":\"gyroscope\","
+                     "\"value\":[%.2f,%.2f,%.2f],"
+                     "\"unit\":\"rad/s\","
                      "\"ts\":%u}",
                      sp->v[3] / 100.0f, sp->v[4] / 100.0f, sp->v[5] / 100.0f, sp->ts);
         p += w;
         left -= w;
     }
     snprintf(p, left, "]}\n");
-    
-    fputs(buf, stdout); 
-    fflush(stdout);     
 
-    mqtt_publish_json(buf); 
+    fputs(buf, stdout);
+    fflush(stdout);
+
+    mqtt_publish_json(buf);
 }
 
 /* ─────────── 6.  EXT-ADVERTISER HELPERS ────────────────────────────── */
 
 /**
  * Set the static advertising address for the extended advertiser.
- * 
+ *
  * @param dev       HCI device handle
  * @param handle    Advertising handle (0x00 for first set)
  * @param str_addr  Address string in format "XX:XX:XX:XX:XX:XX"
@@ -365,7 +366,7 @@ static int set_static_adv_addr(int dev, uint8_t handle, const char *str_addr)
 
 /**
  * Set the extended advertising parameters for the advertiser.
- * 
+ *
  * @param dev  HCI device handle
  * @return     0 on success, -1 on failure
  */
@@ -422,7 +423,7 @@ static int set_ext_adv_data_time(int dev, uint16_t time_cs)
 
 /**
  * Enable or disable the extended advertising.
- * 
+ *
  * @param dev  HCI device handle
  * @param en   true to enable, false to disable
  * @return     0 on success, -1 on failure
@@ -448,7 +449,7 @@ static int set_ext_adv_enable(int dev, bool en)
 
 /**
  * Set the extended scan parameters for the scanner.
- * 
+ *
  * @param dev  HCI device handle
  * @return     0 on success, -1 on failure
  */
@@ -475,7 +476,7 @@ static int set_ext_scan_params(int dev)
 
 /**
  * Enable or disable the extended scanning.
- * 
+ *
  * @param dev        HCI device handle
  * @param en         true to enable, false to disable
  * @param filter_dup true to filter duplicate reports, false otherwise
@@ -503,12 +504,12 @@ static int set_ext_scan_enable(int dev, bool en, bool filter_dup)
 
 /**
  * Decrypt a sensor data block using AES-CTR mode.
- * 
+ *
  * @param key     AES key (16 bytes)
  * @param nonce   Nonce (8 bytes)
  * @param cipher  Ciphertext (sensor data block, 230 bytes)
  * @param plain   Output buffer for plaintext (230 bytes)
- * 
+ *
  * @return        0 on success, negative error code on failure
  */
 static int decrypt_sensor_block_ap(const unsigned char *key,
@@ -711,7 +712,7 @@ static void process_scan_packet(uint8_t *buf, int len)
                 int batt = plain[off++] * 20;
 
                 // SoC temperature
-                int8_t soc_temp = plain[off++]; 
+                int8_t soc_temp = plain[off++];
 
                 // Number of IMU batch
                 uint8_t number_of_batch = plain[off++];
@@ -734,7 +735,6 @@ static void process_scan_packet(uint8_t *buf, int len)
 
                 emit_json_full(rssi, tempC, press, batt, soc_temp,
                                number_of_batch, samples);
-
             }
             else
             {
@@ -753,7 +753,7 @@ static void process_scan_packet(uint8_t *buf, int len)
             }
 
             schedule_ap_burst(trig_us / 1000000L, trig_us % 1000000L);
-            next_regular_burst_epoch = time(NULL) + (trig_us / 1000000L); 
+            next_regular_burst_epoch = time(NULL) + (trig_us / 1000000L);
         }
 
         /*  reset accumulator for next advertising event               */
@@ -810,9 +810,9 @@ int main(int argc, char *argv[])
 
     if (mqtt_init() < 0)
     {
-        fprintf(stderr, "Failed to initialise MQTT - continuing without publish\n"); 
+        fprintf(stderr, "Failed to initialise MQTT - continuing without publish\n");
     }
-    
+
     // Set random address
     if (set_static_adv_addr(device, 0x00, random_ble_addr) < 0)
     {
@@ -899,6 +899,6 @@ exit:
     {
         hci_close_dev(device);
     }
-    mqtt_cleanup(); 
+    mqtt_cleanup();
     return 0;
 }
