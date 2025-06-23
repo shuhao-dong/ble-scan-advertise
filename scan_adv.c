@@ -272,10 +272,10 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
     char timestamp[32];
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", tm);
+    strftime(timestamp, sizeof(timestamp), "Y-m-%dTH:M:%SZ", tm);
 
     int w = snprintf(p, left,
-        "{
+        "{"
             "\"timestamp\":\"%s\","
             "\"measurements\":[", timestamp);
     p += w;
@@ -299,8 +299,7 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
                     "\"value\":[%.2f,%.2f,%.2f],"
                     "\"unit\":\"m/s^2\"},"
                      "\"ts\":%u}",
-                     sp->ts,
-                     sp-v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f,);
+                     sp->v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f, sp->ts);
         p += w;
         left -= w;
 
@@ -309,8 +308,7 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
                     "\"value\":[%.2f,%.2f,%.2f],"
                     "\"unit\":\"rad/s\"},"
                      "\"ts\":%u}",
-                     sp->ts,
-                     sp->v[3] / 100.0f, sp->v[4] / 100.0f, sp->v[5] / 100.0f);
+                     sp->v[3] / 100.0f, sp->v[4] / 100.0f, sp->v[5] / 100.0f, sp->ts);
         p += w;
         left -= w;
     }
