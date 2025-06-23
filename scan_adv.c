@@ -269,13 +269,24 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     char *p = buf;
     int left = JSON_BUF;
 
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    char timestamp[32];
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", tm);
+
     int w = snprintf(p, left,
-                     "{\"rssi\":%d,"
-                     "\"temp\":%d,"
-                     "\"press\":%.1f,"
-                     "\"batt\":%d,"
-                     "\"soc\":%d,"
-                     "\"samples\":[",
+        "{
+            "\"timestamp\":\"%s\","
+            "\"measurements\":[", timestamp);
+    p += w;
+    left -= w;  
+
+    int w = snprintf(p, left,
+                     "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
+                     "{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},"
+                     "{\"property\":\"pressure\",\"value\":%.1f,\"unit\":\"hPa\"},"
+                     "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
+                     "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},",
                      rssi, tempC, press_hPa, batt_mV, soc_deg);
     p += w;
     left -= w;
@@ -284,12 +295,21 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     {
         const imu_payload_t *sp = &s[i];
         w = snprintf(p, left,
-                     "%s{\"ts\":%u,"
-                     "\"ax\":%.2f,\"ay\":%.2f,\"az\":%.2f,"
-                     "\"gx\":%.2f,\"gy\":%.2f,\"gz\":%.2f}",
-                     (i ? "," : ""),
+                    ",{\"property\":\"acceleration\","
+                    "\"value\":[%.2f,%.2f,%.2f],"
+                    "\"unit\":\"m/s^2\"},"
+                     "\"ts\":%u}",
                      sp->ts,
-                     sp->v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f,
+                     sp->v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f,);
+        p += w;
+        left -= w;
+
+        w = snprintf(p, left,
+                    ",{\"property\":\"gyroscope\","
+                    "\"value\":[%.2f,%.2f,%.2f],"
+                    "\"unit\":\"rad/s\"},"
+                     "\"ts\":%u}",
+                     sp->ts,
                      sp->v[3] / 100.0f, sp->v[4] / 100.0f, sp->v[5] / 100.0f);
         p += w;
         left -= w;
