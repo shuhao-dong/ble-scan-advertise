@@ -299,7 +299,7 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     {
         const imu_payload_t *sp = &s[i];
         w = snprintf(p, left,
-                     ",{\"property\":\"acceleration\","
+                     "{\"property\":\"acceleration\","
                      "\"value\":[%.2f,%.2f,%.2f],"
                      "\"unit\":\"m/s^2\","
                      "\"ts\":%u}",
