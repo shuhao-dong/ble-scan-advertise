@@ -1,5 +1,5 @@
 # BLE Scan and Advertise
-Use Bluez library to scan and advertise concurrently
+Use Bluez library to scan and advertise in extended advertisement mode concurrently. The received data will be published via MQTT to a broker.
 
 ## Credits
 
@@ -9,22 +9,13 @@ This program is based on code by David G. Young at: https://github.com/davidgyou
 Please follow the instructions in the above link to install necessary libraries
 
 ## Test Platform
-Raspberry Pi 5 running Debian GNU/Linux version 12, with Python 3.11.2
+Raspberry Pi 5 running Debian GNU/Linux version 12, with Python 3.11.2. nRF52840 dongle is used as the Bluetooth dongle to receive extended advertisement. The dongle is flashed with the HCI controller firmware at: https://github.com/shuhao-dong/BORUS
 
 ## Install Dependencies
 
 You have to install the following libraries before you can use the source code scan_adv.c
 
     sudo apt-get install libssl-dev libbluetooth-dev libmosquitto-dev mosquitto-clients
-
-Under the directory mqtt-publisher, there are two python files that: 
-
-(1) Test C wrapper subprocess
-(2) Test publisher code
-
-To run either python, you will need to install the mqtt library in your virtual environment 
-
-    pip install paho-mqtt
 
 ## Configure Random Static Address
 
