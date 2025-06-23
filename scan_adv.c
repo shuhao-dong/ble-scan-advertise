@@ -4,6 +4,7 @@
  *  ─────────────────────────────────
  *  • Passive **extended** scanner for BORUS wearable
  *  • Periodic heartbeat broadcaster (legacy PDU via ext-adv cmds)
+ *  • Publishes JSON data to a MQTT broker
  *
  *  Compile:  cc scan_adv.c -o ~/scan_publish -lbluetooth -lssl -lcrypto -lmosquitto
  * 
