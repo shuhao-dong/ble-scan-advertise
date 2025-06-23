@@ -28,5 +28,5 @@ C0 denotes a random static address (this is a must), 54:52:53 is the ASCII code 
 
 
 # JSON Schema for Wearable Packets
-This schema defines the structure of MQTT messages sent by the BLE scanner: https://github.com/talliskinrade/torus_wearable_packet.git
+This schema defines the structure of MQTT messages sent by the BLE scanner: internship\torus_wearable_packet_JSON
 
