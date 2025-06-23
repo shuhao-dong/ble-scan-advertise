@@ -300,7 +300,7 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
                     "\"unit\":\"m/s^2\"},"
                      "\"ts\":%u}",
                      sp->ts,
-                     sp->v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f,);
+                     sp-v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f,);
         p += w;
         left -= w;
 
