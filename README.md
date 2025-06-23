@@ -26,6 +26,16 @@ To run either python, you will need to install the mqtt library in your virtual 
 
     pip install paho-mqtt
 
+## Configure Random Static Address
 
-## JSON Schema for Wearable Packets
+The RPi acts as both observer and broadcaster, meaning it will also advertise back to the wearable to let the wearable confirm its current status.
+In this advertising process, we explicitly configured the RPi with the following MAC address format:
+
+    C0:54:52:53:XX:XX
+
+C0 denotes a random static address (this is a must), 54:52:53 is the ASCII code for TRS (short for TORUS), the last two bytes can be arranged as needed. In test phase, this can be incrementing number. In deployment phase, this can be house number:participant number/wearable number etc. 
+
+
+# JSON Schema for Wearable Packets
 This schema defines the structure of MQTT messages sent by the BLE scanner: https://github.com/talliskinrade/torus_wearable_packet.git
+
