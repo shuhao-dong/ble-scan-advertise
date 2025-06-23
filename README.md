@@ -29,4 +29,5 @@ To run either python, you will need to install the mqtt library in your virtual 
     pip install paho-mqtt
 
 
-
+## JSON Schema for Wearable Packets
+This schema defines the structure of MQTT messages sent by the BLE scanner: https://github.com/talliskinrade/torus_wearable_packet.git
