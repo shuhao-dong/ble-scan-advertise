@@ -403,10 +403,10 @@ static int set_ext_adv_data_time(int dev, uint16_t time_cs)
     cp.operation = 0x03; /* complete data */
     cp.frag_pref = 0x00;
     uint8_t *d = cp.data;
-    *d++ = 0x05;
-    *d++ = 0xFF;
-    *d++ = 0x59;
-    *d++ = 0x00;
+    *d++ = 0x05;    // length of the data: Change this if input of the function changes
+    *d++ = 0xFF;    // type: Manufacturer Specific Data
+    *d++ = 0x59;    // company ID low byte (Nordic Semiconductor)
+    *d++ = 0x00;    // company ID high byte
     *d++ = (uint8_t)(time_cs & 0xFF);
     *d++ = (uint8_t)(time_cs >> 8);
     cp.data_len = d - cp.data;
