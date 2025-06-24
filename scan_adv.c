@@ -43,7 +43,7 @@ static const char random_ble_addr[] = "C0:54:52:53:00:00";
 #define SENSOR_ADV_PAYLOAD_TYPE 0x00
 #define AWAY_ADV_PAYLOAD_TYPE 0x01
 
-#define SENSOR_DATA_PACKET_SIZE 230
+#define SENSOR_DATA_PACKET_SIZE 231
 #define NONCE_LEN 8
 #define SENSOR_PAYLOAD_DATA_LEN (NONCE_LEN + SENSOR_DATA_PACKET_SIZE)
 #define SYNC_REQ_PAYLOAD_DATA_LEN 2
@@ -590,6 +590,9 @@ static void process_scan_packet(uint8_t *buf, int len)
                 // SoC temperature
                 int8_t soc_temp = plain[off++]; 
 
+                // npm1100 ERR status
+                uint8_t npm1100_err = plain[off++];
+
                 // Number of IMU batch
                 uint8_t number_of_batch = plain[off++];
 
@@ -615,8 +618,8 @@ static void process_scan_packet(uint8_t *buf, int len)
                     off += 4;
                 }
 
-                printf("  DECRYPT OK  temp=%dC  press=%.1fhPa  batt=%dmV  SoC=%dC  samples=%u\n",
-                       tempC, press, batt, soc_temp, number_of_batch);
+                printf("  DECRYPT OK  temp=%dC  press=%.1fhPa  batt=%dmV  SoC=%dC  npmERR=%d  samples=%u\n",
+                       tempC, press, batt, soc_temp, npm1100_err, number_of_batch);
 
                 for (uint8_t i = 0; i < number_of_batch; i++)
                 {
