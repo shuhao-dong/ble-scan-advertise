@@ -374,6 +374,20 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
         p += w;
         left -= w;
     }
+
+    w = snprintf(p, left,
+                 "],\"monitoring\":[");
+    p += w;
+    left -= w;
+
+    w = snprintf(p, left,
+             "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
+             "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},",
+             batt_mV, soc_deg);
+
+    p += w;
+    left -= w;
+
     snprintf(p, left, "]}\n");
 
     fputs(buf, stdout);
