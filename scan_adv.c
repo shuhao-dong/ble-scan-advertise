@@ -343,13 +343,9 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     left -= w;
 
     w = snprintf(p, left,
-                 "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
                  "{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},"
-                 "{\"property\":\"pressure\",\"value\":%.2f,\"unit\":\"hPa\"},"
-                 "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
-                 "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},"
-                 "{\"property\":\"npm_status\",\"value\":%d,\"unit\":\"NULL\"},",
-                 rssi, tempC, press_hPa, batt_mV, soc_deg, npm_err);
+                 "{\"property\":\"pressure\",\"value\":%.2f,\"unit\":\"hPa\"},",
+                 tempC, press_hPa);
     p += w;
     left -= w;
 
@@ -381,9 +377,11 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     left -= w;
 
     w = snprintf(p, left,
+             "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
              "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
-             "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},",
-             batt_mV, soc_deg);
+             "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},"
+             "{\"property\":\"npm_status\",\"value\":%d,\"unit\":\"NULL\"},",
+             rssi, batt_mV, soc_deg, npm_err);
 
     p += w;
     left -= w;
