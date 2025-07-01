@@ -20,22 +20,30 @@ struct sp_port *establish_port()
     struct sp_port **ports;
     while (1)
     {
+        printf("Scanning for serial ports...\n");
         // list all ports
         sp_list_ports(&ports);
         for (int i = 0; ports[i]; i++)
         {
             // select valid ports
             const char *name = sp_get_port_name(ports[i]);
+            printf("Checking port: %s\n", name);
             if (strstr(name, "ttyACM") ||
                 strstr(name, "ttyUSB") ||
                 strstr(name, "COM"))
             {
+                printf("Attempting to open port: %s\n", name);
                 // test ports and connect
                 if (sp_open(ports[i], SP_MODE_READ) == SP_OK)
                 {
+                    printf("Connected to %s\n", name);
                     sp_set_baudrate(ports[i], BAUD_RATE);
                     sp_free_port_list(ports);
                     return ports[i];
+                }
+                else
+                {
+                    printf("Failed to open port: %s\n", name);
                 }
             }
         }
@@ -52,12 +60,15 @@ void mqtt_connect(MQTTClient *client)
     opts.cleansession = 1;
     while (MQTTClient_connect(*client, &opts) != MQTTCLIENT_SUCCESS)
     {
+        printf("MQTT connect failed with code %d. Retrying... \n, rc");
         sleep(1);
     }
+    printf("MQTT connected successfully.\n");
 }
 
 int main()
 {
+    printf("Creating MQTT client for broker %s\n", BROKER_URI);
     // create + connect MQTT client
     MQTTClient client;
     MQTTClient_create(&client, BROKER_URI, CLIENT_ID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
@@ -74,16 +85,20 @@ int main()
         char *p = json_buf;
         int left = JSON_LEN;
 
-        int n = sp_nonblocking_read(port, buf, BUF_LEN - 1, 1000);
+        int n = sp_nonblocking_read(port, buf, BUF_LEN - 1);
         // disconnect + reconnect serial on failure or no data
         if (n <= 0)
         {
+            PRINTF("No serial data recieved (n= %d). Reconnecting to port...\n", n);
             sp_close(port);
             port = establish_port();
             continue;
         }
         buf[n] = '\0';
+        printf("Raw serial input: '%s' (%d bytes)\n", buf, n);
+
         float value = atof(buf);
+        printf("Parsed value: %.2f\n", value);
 
         // get epoch time
         time_t now = time(NULL);
@@ -109,16 +124,33 @@ int main()
                          "\"timestamp\":\"%s\","
                          "\"measurements\":[",
                          ts);
+        if (w < 0 || w >= left)
+        {
+            fprintf(stderr, "Error: snprintf failed or buffer overflow (1).\n");
+            continue;
+        }
         p += w;
         left -= w;
 
         w = snprintf(p, left,
                      "{\"property\":\"base_pressure\",\"value\":%.2f,\"unit\":\"hPa\"}",
                      value);
+        if (w < 0 || w >= left)
+        {
+            fprintf(stderr, "Error: snprintf failed or buffer overflow (2).\n");
+            continue;
+        }
         p += w;
         left -= w;
 
         snprintf(p, left, "]}\n");
+        if (w < 0 || w >= left)
+        {
+            fprintf(stderr, "Error: snprintf failed or buffer overflow (3).\n");
+            continue;
+        }
+
+        printf("Final JSON payload: %s\n", json_buf);
 
         fputs(json_buf, stdout); // print to terminal
         fflush(stdout);
