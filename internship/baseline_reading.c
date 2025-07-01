@@ -74,7 +74,7 @@ int main()
         char *p = json_buf;
         int left = JSON_LEN;
 
-        int n = sp_nonblocking_read(port, buf, BUF_LEN - 1);
+        int n = sp_nonblocking_read(port, buf, BUF_LEN - 1, 1000);
         // disconnect + reconnect serial on failure or no data
         if (n <= 0)
         {
