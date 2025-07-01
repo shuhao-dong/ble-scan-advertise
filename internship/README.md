@@ -11,7 +11,7 @@ Containing the JSON Schema (JSON_test.jsonc) and an example of what a packet fro
 
 ## baseline_reading.c
 Publishes the baseline pressure reading from the arduino via MQTT.
-Example:
+Example raw serial output:
 "
 101.6200 29.4678
 
@@ -20,3 +20,15 @@ Example:
 101.6201 29.4723
 
 "
+
+Example console output:
+"
+Raw serial input: '101.6161 27.8329'
+Parsed value: 101.62
+Final JSON payload: {"timestamp":"2025-07-01T16:38:50Z","measurements":[{"property":"base_pressure","value":101.62,"unit":"hPa"}]}
+"
+
+Example subscriber output:
+borus/wearable {"timestamp":"2025-07-01T16:38:50Z","measurements":[{"property":"base_pressure","value":101.62,"unit":"hPa"}]}
+
+Theres also the possibility to output the baseline temperature as well.
