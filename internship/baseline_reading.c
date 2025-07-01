@@ -78,108 +78,99 @@ int main()
     // connect to arduino
     struct sp_port *port = establish_port();
 
-    if (!port) {
+    if (!port)
+    {
         printf("ERROR: establish_port returned NULL\n");
         return 1;
     }
     printf("Port seccessfully returned to main\n");
-    
+
     char buf[BUF_LEN];
     char json_buf[JSON_LEN];
 
     while (1)
     {
-        char *p = json_buf;
-        int left = JSON_LEN;
+        static char line_buf[BUF_LEN];
+        static int pos = 0;
 
-        int n = sp_nonblocking_read(port, buf, BUF_LEN - 1);
-        // disconnect + reconnect serial on failure or no data
-        if (n <= 0)
+        unsigned char byte;
+        while (sp_nonblocking_read(port, &byte, 1) == 1)
         {
-            printf("No serial data recieved (n= %d). Reconnecting to port...\n", n);
-            sp_close(port);
-            port = establish_port();
-            continue;
+            if (byte == '\n')
+            {
+                line_buf[pos] = '\0';
+                pos = 0;
+
+                printf("Raw serial input: '%s'\n", line_buf);
+                float value = 0;
+                if (sscanf(line_buf, "%f", &value) != 1)
+                {
+                    fprintf(stderr, "Failed to parse value from: '%s'\n", line_buf);
+                    continue;
+                }
+
+                printf("Parsed value: %.2f\n", value);
+
+                // get timestamp
+                time_t now = time(NULL);
+                struct tm tm;
+                gmtime_r(&now, &tm);
+                char ts[32];
+                strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tm);
+
+                // build JSON string
+                char *p = json_buf;
+                int left = JSON_LEN;
+
+                int w = snprintf(p, left,
+                                 "{"
+                                 "\"timestamp\":\"%s\","
+                                 "\"measurements\":[",
+                                 ts);
+                if (w < 0 || w >= left)
+                    continue;
+                p += w;
+                left -= w;
+
+                w = snprintf(p, left,
+                             "{\"property\":\"base_pressure\",\"value\":%.2f,\"unit\":\"hPa\"}",
+                             value);
+                if (w < 0 || w >= left)
+                    continue;
+                p += w;
+                left -= w;
+
+                snprintf(p, left, "]}\n");
+
+                printf("Final JSON payload: %s\n", json_buf);
+
+                // publish message
+                MQTTClient_message msg = MQTTClient_message_initializer;
+                msg.payload = json_buf;
+                msg.payloadlen = strlen(json_buf);
+                msg.qos = 1;
+                MQTTClient_deliveryToken token;
+                if (MQTTClient_publishMessage(client, TOPIC, &msg, &token) != MQTTCLIENT_SUCCESS)
+                {
+                    MQTTClient_disconnect(client, 1000);
+                    mqtt_connect(&client);
+                    MQTTClient_publishMessage(client, TOPIC, &msg, &token);
+                }
+                MQTTClient_waitForCompletion(client, token, 1000);
+
+                break; // break out of byte-reading loop to restart cleanly
+            }
+            else if (byte >= 32 && byte <= 126 && pos < BUF_LEN - 1)
+            {
+                line_buf[pos++] = byte;
+            }
+            else if (byte == '\r')
+            {
+                continue; // ignore CR
+            }
         }
-        buf[n] = '\0';
-        printf("Raw serial input: '%s' (%d bytes)\n", buf, n);
-
-        float value = atof(buf);
-        printf("Parsed value: %.2f\n", value);
-
-        // get epoch time
-        time_t now = time(NULL);
-        // format
-        struct tm tm;
-        gmtime_r(&now, &tm);
-        char ts[32];
-        strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tm);
-
-        // // build JSON object
-        // cJSON *root = cJSON_CreateObject();                                 //empty object
-        // cJSON_AddStringToObject(root, "timestamp", ts);                     //timestamp at root
-        // cJSON *measurements = cJSON_AddArrayToObject(root, "measurements"); //measurements array
-        // cJSON *pressure = cJSON_CreateObject();                             //pressure object
-        // cJSON_AddStringToObject(pressure, "property", "base_press");        //add pressure properties
-        // cJSON_AddNumberToObject(pressure, "value", value);                  //<
-        // cJSON_AddStringToObject(pressure, "unit", "hPa");                   //<
-        // cJSON_AddItemToArray(measurements, pressure);                       //add pressure to measurements
-        // char *json_str = cJSON_PrintUnformatted(root);                      //serialse
-
-        int w = snprintf(p, left,
-                         "{"
-                         "\"timestamp\":\"%s\","
-                         "\"measurements\":[",
-                         ts);
-        if (w < 0 || w >= left)
-        {
-            fprintf(stderr, "Error: snprintf failed or buffer overflow (1).\n");
-            continue;
-        }
-        p += w;
-        left -= w;
-
-        w = snprintf(p, left,
-                     "{\"property\":\"base_pressure\",\"value\":%.2f,\"unit\":\"hPa\"}",
-                     value);
-        if (w < 0 || w >= left)
-        {
-            fprintf(stderr, "Error: snprintf failed or buffer overflow (2).\n");
-            continue;
-        }
-        p += w;
-        left -= w;
-
-        snprintf(p, left, "]}\n");
-        if (w < 0 || w >= left)
-        {
-            fprintf(stderr, "Error: snprintf failed or buffer overflow (3).\n");
-            continue;
-        }
-
-        printf("Final JSON payload: %s\n", json_buf);
-
-        fputs(json_buf, stdout); // print to terminal
-        fflush(stdout);
-
-        // publish message
-        MQTTClient_message msg = MQTTClient_message_initializer;
-        msg.payload = json_buf;
-        msg.payloadlen = strlen(json_buf);
-        msg.qos = 1;
-        MQTTClient_deliveryToken token;
-        // disconnect + reconnect MQTT on failure
-        if (MQTTClient_publishMessage(client, TOPIC, &msg, &token) != MQTTCLIENT_SUCCESS)
-        {
-            MQTTClient_disconnect(client, 1000);
-            mqtt_connect(&client);
-            MQTTClient_publishMessage(client, TOPIC, &msg, &token);
-        }
-        MQTTClient_waitForCompletion(client, token, 1000);
-
-        // cJSON_Delete(root);
-        // free(json_str);
     }
+
     MQTTClient_disconnect(client, 1000);
     MQTTClient_destroy(&client);
     sp_close(port);
