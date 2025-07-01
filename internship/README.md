@@ -11,3 +11,12 @@ Containing the JSON Schema (JSON_test.jsonc) and an example of what a packet fro
 
 ## baseline_reading.c
 Publishes the baseline pressure reading from the arduino via MQTT.
+Example:
+"
+101.6200 29.4678
+
+101.6200 29.4711
+
+101.6201 29.4723
+
+"
