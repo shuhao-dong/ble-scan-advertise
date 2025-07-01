@@ -34,12 +34,13 @@ struct sp_port *establish_port()
             {
                 printf("Attempting to open port: %s\n", name);
                 // test ports and connect
+                struct sp_port *selected = ports[i];
                 if (sp_open(ports[i], SP_MODE_READ) == SP_OK)
                 {
                     printf("Connected to %s\n", name);
-                    sp_set_baudrate(ports[i], BAUD_RATE);
+                    sp_set_baudrate(selected, BAUD_RATE);
                     sp_free_port_list(ports);
-                    return ports[i];
+                    return selected;
                 }
                 else
                 {
@@ -60,7 +61,7 @@ void mqtt_connect(MQTTClient *client)
     opts.cleansession = 1;
     while (MQTTClient_connect(*client, &opts) != MQTTCLIENT_SUCCESS)
     {
-        printf("MQTT connect failed with code %d. Retrying... \n, rc");
+        printf("MQTT connect failed with code. Retrying... \n");
         sleep(1);
     }
     printf("MQTT connected successfully.\n");
@@ -77,6 +78,12 @@ int main()
     // connect to arduino
     struct sp_port *port = establish_port();
 
+    if (!port) {
+        printf("ERROR: establish_port returned NULL\n");
+        return 1;
+    }
+    printf("Port seccessfully returned to main\n");
+    
     char buf[BUF_LEN];
     char json_buf[JSON_LEN];
 
@@ -89,7 +96,7 @@ int main()
         // disconnect + reconnect serial on failure or no data
         if (n <= 0)
         {
-            PRINTF("No serial data recieved (n= %d). Reconnecting to port...\n", n);
+            printf("No serial data recieved (n= %d). Reconnecting to port...\n", n);
             sp_close(port);
             port = establish_port();
             continue;
