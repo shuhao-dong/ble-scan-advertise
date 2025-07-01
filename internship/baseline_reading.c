@@ -133,8 +133,8 @@ int main()
         }
         MQTTClient_waitForCompletion(client, token, 1000);
 
-        cJSON_Delete(root);
-        free(json_str);
+        // cJSON_Delete(root);
+        // free(json_str);
     }
     MQTTClient_disconnect(client, 1000);
     MQTTClient_destroy(&client);
