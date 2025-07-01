@@ -48,7 +48,7 @@ static const char random_ble_addr[] = "C0:54:52:53:00:00";
 #define SENSOR_ADV_PAYLOAD_TYPE 0x00
 #define AWAY_ADV_PAYLOAD_TYPE 0x01
 
-#define SENSOR_DATA_PACKET_SIZE 230
+#define SENSOR_DATA_PACKET_SIZE 231
 #define NONCE_LEN 8
 #define SENSOR_PAYLOAD_DATA_LEN (NONCE_LEN + SENSOR_DATA_PACKET_SIZE)
 #define SYNC_REQ_PAYLOAD_DATA_LEN 2
@@ -322,7 +322,7 @@ typedef struct
  *
  */
 static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
-                           int batt_mV, int soc_deg,
+                           int batt_mV, int soc_deg, uint8_t npm_err,
                            uint8_t n, const imu_payload_t *s)
 {
     char buf[JSON_BUF];
@@ -343,10 +343,9 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     left -= w;
 
     w = snprintf(p, left,
-                 "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
                  "{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},"
-                 "{\"property\":\"pressure\",\"value\":%.1f,\"unit\":\"hPa\"},"
-                 rssi, tempC, press_hPa);
+                 "{\"property\":\"pressure\",\"value\":%.2f,\"unit\":\"hPa\"},",
+                 tempC, press_hPa);
     p += w;
     left -= w;
 
@@ -378,9 +377,11 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     left -= w;
 
     w = snprintf(p, left,
+             "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
              "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
-             "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},",
-             batt_mV, soc_deg);
+             "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},"
+             "{\"property\":\"npm_status\",\"value\":%d,\"unit\":\"NULL\"},",
+             rssi, batt_mV, soc_deg, npm_err);
 
     p += w;
     left -= w;
@@ -786,6 +787,9 @@ static void process_scan_packet(uint8_t *buf, int len)
                 // SoC temperature
                 int8_t soc_temp = plain[off++];
 
+                // NPM1100 err status
+                uint8_t npm_err = plain[off++];
+
                 // Number of IMU batch
                 uint8_t number_of_batch = plain[off++];
 
@@ -805,8 +809,8 @@ static void process_scan_packet(uint8_t *buf, int len)
                     off += 4;
                 }
 
-                emit_json_full(rssi, tempC, press, batt, soc_temp,
-                               number_of_batch, samples);
+                emit_json_full(rssi, tempC, press, batt, soc_temp, npm_err,
+                               number_of_batch, samples );
             }
             else
             {
