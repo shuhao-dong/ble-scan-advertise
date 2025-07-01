@@ -68,10 +68,12 @@ int main()
 
     char buf[BUF_LEN];
     char json_buf[JSON_LEN];
-    char *p = json_buf;
-    int left = JSON_LEN;
+
     while (1)
     {
+        char *p = json_buf;
+        int left = JSON_LEN;
+
         int n = sp_nonblocking_read(port, buf, BUF_LEN - 1);
         // disconnect + reconnect serial on failure or no data
         if (n <= 0)
@@ -111,12 +113,15 @@ int main()
         left -= w;
 
         w = snprintf(p, left,
-                     "{\"property\":\"base_pressure\",\"value\":%.2f,\"unit\":\"hPa\"},",
+                     "{\"property\":\"base_pressure\",\"value\":%.2f,\"unit\":\"hPa\"}",
                      value);
         p += w;
         left -= w;
 
         snprintf(p, left, "]}\n");
+
+        fputs(json_buf, stdout); // print to terminal
+        fflush(stdout);
 
         // publish message
         MQTTClient_message msg = MQTTClient_message_initializer;
