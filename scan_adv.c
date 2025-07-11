@@ -31,7 +31,7 @@
 
 /* ───────────────────── 1.  APPLICATION CONFIG ───────────────────────── */
 
-static const char target_mac[] = "EE:54:52:53:00:00"; /* BORUS wearable */
+static const char target_mac[] = "EE:54:52:53:00:01"; /* BORUS wearable */
 static const char random_ble_addr[] = "C0:54:52:53:00:00";
 
 #define BASE_ADV_INTERVAL_S 60
