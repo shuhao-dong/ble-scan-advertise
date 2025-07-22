@@ -344,7 +344,7 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
 
     w = snprintf(p, left,
              "\"wearable_id\":\"%s\",",
-             addr_str);
+             target_mac);
              
     p += w;
     left -= w;
