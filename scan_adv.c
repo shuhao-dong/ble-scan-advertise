@@ -334,7 +334,7 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     char timestamp[32];
     strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", tm);
 
-    w = snprintf(p, left,
+    int w = snprintf(p, left,
          "{"
              "\"base_timestamp\":\"%s\",",
              timestamp);
@@ -342,21 +342,21 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     p += w;
     left -= w;
 
-    int w = snprintf(p, left,
+    w = snprintf(p, left,
              "\"wearable_id\":\"%s\",",
              addr_str);
              
     p += w;
     left -= w;
 
-    int w = snprintf(p, left,
+    w = snprintf(p, left,
              "\"gateway_id\":\"%s\",",
              random_ble_addr);
              
     p += w;
     left -= w;
 
-    int w = snprintf(p, left,
+    w = snprintf(p, left,
              "\"measurement_data\":{"
                  "\"state\":["
                      "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
