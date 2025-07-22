@@ -334,18 +334,37 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     char timestamp[32];
     strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", tm);
 
-    int w = snprintf(p, left,
-                     "{"
-                     "\"timestamp\":\"%s\","
-                     "\"measurements\":[",
-                     timestamp);
+    w = snprintf(p, left,
+         "{"
+             "\"base_timestamp\":\"%s\",",
+             timestamp);
+             
     p += w;
     left -= w;
 
-    w = snprintf(p, left,
-                 "{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},"
-                 "{\"property\":\"pressure\",\"value\":%.2f,\"unit\":\"hPa\"},",
-                 tempC, press_hPa);
+    int w = snprintf(p, left,
+             "\"wearable_id\":\"%s\",",
+             addr_str);
+             
+    p += w;
+    left -= w;
+
+    int w = snprintf(p, left,
+             "\"gateway_id\":\"%s\",",
+             random_ble_addr);
+             
+    p += w;
+    left -= w;
+
+    int w = snprintf(p, left,
+             "\"measurement_data\":{"
+                 "\"state\":["
+                     "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
+                     "{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},"
+                     "{\"property\":\"pressure\",\"value\":%.1f,\"unit\":\"hPa\"},"
+                     "],"
+                 "\"IMU_batch\":[",
+             rssi, tempC, press_hPa);
     p += w;
     left -= w;
 
@@ -353,40 +372,35 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     {
         const imu_payload_t *sp = &s[i];
         w = snprintf(p, left,
-                     "{\"property\":\"acceleration\","
-                     "\"value\":[%.2f,%.2f,%.2f],"
-                     "\"unit\":\"m/s^2\","
-                     "\"ts\":%u}",
-                     sp->v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f, sp->ts);
-        p += w;
-        left -= w;
-
-        w = snprintf(p, left,
-                     ",{\"property\":\"gyroscope\","
-                     "\"value\":[%.2f,%.2f,%.2f],"
-                     "\"unit\":\"rad/s\","
-                     "\"ts\":%u}",
+                     "%s{"
+                         "\"acceleration\":[%.2f,%.2f,%.2f],"
+                         "\"acceleration_unit\":\"m/s^2\","
+                         "\"gyroscope\":[%.2f,%.2f,%.2f],"
+                         "\"gyroscope_unit\":\"rad/s\","
+                         "\"timestamp\":%u}",
+                     sp->v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f,
                      sp->v[3] / 100.0f, sp->v[4] / 100.0f, sp->v[5] / 100.0f, sp->ts);
         p += w;
         left -= w;
     }
 
     w = snprintf(p, left,
-                 "],\"monitoring\":[");
+                     "]},\"monitoring\":[");
     p += w;
     left -= w;
 
     w = snprintf(p, left,
-             "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
-             "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
-             "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},"
-             "{\"property\":\"npm_status\",\"value\":%d,\"unit\":\"NULL\"},",
-             rssi, batt_mV, soc_deg, npm_err);
+                         "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
+                         "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"}"
+                     "]",
+             batt_mV, soc_deg);
 
     p += w;
     left -= w;
+    
+    
 
-    snprintf(p, left, "]}\n");
+    snprintf(p, left, "}\n");
 
     fputs(buf, stdout);
     fflush(stdout);
