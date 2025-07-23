@@ -32,3 +32,16 @@ Example subscriber output:
 borus/wearable {"timestamp":"2025-07-01T16:38:50Z","measurements":[{"property":"base_pressure","value":101.62,"unit":"hPa"}]}
 
 Theres also the possibility to output the baseline temperature as well.
+
+# Required Packages:
+Ensure that libpaho-mqtt-dev and libserialport-dev are installed.
+Commands:
+sudo apt install libpaho-mqtt-dev
+sudo apt install libserialport-dev
+
+# To Run:
+To build:
+cc baseline_reading.c -o baseline_reading -lserialport -lpaho-mqtt3c
+
+To run:
+sudo ./baseline_reading
