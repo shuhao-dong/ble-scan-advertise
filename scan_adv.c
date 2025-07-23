@@ -321,7 +321,7 @@ typedef struct
  * @param s          Pointer to an array of imu_payload_t samples
  *
  */
-static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
+static void emit_json_full(const char *gateway_id, char *wearable_id, int8_t rssi, int tempC, float press_hPa,
                            int batt_mV, int soc_deg, uint8_t npm_err,
                            uint8_t n, const imu_payload_t *s)
 {
@@ -336,35 +336,21 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
 
     int w = snprintf(p, left,
          "{"
-             "\"base_timestamp\":\"%s\",",
-             timestamp);
-             
+             "\"base_timestamp\":\"%s\","
+             "\"wearable_id\":\"%s\","
+             "\"gateway_id\":\"%s\","
+             "\"measurement_data\":{",
+             timestamp, wearable_id, gateway_id);
     p += w;
     left -= w;
 
     w = snprintf(p, left,
-             "\"wearable_id\":\"%s\",",
-             target_mac);
-             
-    p += w;
-    left -= w;
-
-    w = snprintf(p, left,
-             "\"gateway_id\":\"%s\",",
-             random_ble_addr);
-             
-    p += w;
-    left -= w;
-
-    w = snprintf(p, left,
-             "\"measurement_data\":{"
                  "\"state\":["
-                     "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
-                     "{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},"
-                     "{\"property\":\"pressure\",\"value\":%.1f,\"unit\":\"hPa\"},"
-                     "],"
-                 "\"IMU_batch\":[",
-             rssi, tempC, press_hPa);
+                    "{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},"
+                    "{\"property\":\"pressure\",\"value\":%.2f,\"unit\":\"hPa\"},"
+                    "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
+                 "],",
+                 tempC, press_hPa, rssi);
     p += w;
     left -= w;
 
@@ -372,36 +358,38 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     {
         const imu_payload_t *sp = &s[i];
         w = snprintf(p, left,
-                     "%s{"
-                         "\"acceleration\":[%.2f,%.2f,%.2f],"
-                         "\"acceleration_unit\":\"m/s^2\","
-                         "\"gyroscope\":[%.2f,%.2f,%.2f],"
-                         "\"gyroscope_unit\":\"rad/s\","
-                         "\"timestamp\":%u}",
-                     sp->v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f,
-                     sp->v[3] / 100.0f, sp->v[4] / 100.0f, sp->v[5] / 100.0f, sp->ts);
+                 "\"IMU_batch\":["
+                     "{"
+                         "\"acc\":[%.2f,%.2f,%.2f],"
+                         "\"acc_unit\":\"m/s^2\","
+                         "\"gyro\":[%.2f,%.2f,%.2f],"
+                         "\"gyro_unit\":\"rad/s\","
+                         "\"ts\":%u}"
+                     "}",
+                     sp->v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f, 
+                     sp->v[3] / 100.0f, sp->v[4] / 100.0f, sp->v[5] / 100.0f,
+                     sp->ts);
         p += w;
         left -= w;
     }
 
     w = snprintf(p, left,
-                     "]},\"monitoring\":[");
+                 "]"
+             "},"
+             "\"monitoring\":[");
     p += w;
     left -= w;
 
     w = snprintf(p, left,
-                         "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
-                         "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"}"
-                         "{\"property\":\"npm_status\",\"value\":%d,\"},",
-                     "]",
-             batt_mV, soc_deg, npm_err);
+                 "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
+                 "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},"
+                 "{\"property\":\"npm_status\",\"value\":%d}",
+                 batt_mV, soc_deg, npm_err);
 
     p += w;
     left -= w;
-    
-    
 
-    snprintf(p, left, "}\n");
+    snprintf(p, left, "]}\n");
 
     fputs(buf, stdout);
     fflush(stdout);
@@ -824,7 +812,7 @@ static void process_scan_packet(uint8_t *buf, int len)
                     off += 4;
                 }
 
-                emit_json_full(rssi, tempC, press, batt, soc_temp, npm_err,
+                emit_json_full(random_ble_addr, addr_str, rssi, tempC, press, batt, soc_temp, npm_err,
                                number_of_batch, samples );
             }
             else
