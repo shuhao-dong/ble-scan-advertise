@@ -348,8 +348,9 @@ static void emit_json_full(const char *gateway_id, char *wearable_id, int8_t rss
                  "\"state\":["
                     "{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},"
                     "{\"property\":\"pressure\",\"value\":%.2f,\"unit\":\"hPa\"},"
-                    "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
-                 "],",
+                    "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"}"
+                 "],"
+                 "\"IMU_batch\":[",
                  tempC, press_hPa, rssi);
     p += w;
     left -= w;
@@ -358,14 +359,14 @@ static void emit_json_full(const char *gateway_id, char *wearable_id, int8_t rss
     {
         const imu_payload_t *sp = &s[i];
         w = snprintf(p, left,
-                 "\"IMU_batch\":["
-                     "{"
+                     "%s{"
                          "\"acc\":[%.2f,%.2f,%.2f],"
                          "\"acc_unit\":\"m/s^2\","
                          "\"gyro\":[%.2f,%.2f,%.2f],"
                          "\"gyro_unit\":\"rad/s\","
                          "\"ts\":%u}"
                      "}",
+                     (i > 0) ? "," : "",
                      sp->v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f, 
                      sp->v[3] / 100.0f, sp->v[4] / 100.0f, sp->v[5] / 100.0f,
                      sp->ts);
