@@ -364,7 +364,7 @@ static void emit_json_full(const char *gateway_id, char *wearable_id, int8_t rss
                          "\"acc_unit\":\"m/s^2\","
                          "\"gyro\":[%.2f,%.2f,%.2f],"
                          "\"gyro_unit\":\"rad/s\","
-                         "\"ts\":%u}"
+                         "\"ts\":%u"
                      "}",
                      (i > 0) ? "," : "",
                      sp->v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f, 
