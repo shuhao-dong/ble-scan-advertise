@@ -392,8 +392,9 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     w = snprintf(p, left,
                          "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
                          "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"}"
+                         "{\"property\":\"npm_status\",\"value\":%d,\"},",
                      "]",
-             batt_mV, soc_deg);
+             batt_mV, soc_deg, npm_err);
 
     p += w;
     left -= w;
