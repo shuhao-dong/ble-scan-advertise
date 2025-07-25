@@ -3,7 +3,6 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
-// #include <cjson/cJSON.h>
 #include <MQTTClient.h>
 #include <libserialport.h>
 
@@ -94,8 +93,14 @@ int main()
         static int pos = 0;
 
         unsigned char byte;
-        while (sp_nonblocking_read(port, &byte, 1) == 1)
+        int read_result;
+        while ((read_result = sp_nonblocking_read(port, &byte, 1)) >= 0)
         {
+            if (read_result == 0)
+            {
+                usleep(1000);
+                continue;
+            }
             if (byte == '\n')
             {
                 line_buf[pos] = '\0';
@@ -168,6 +173,12 @@ int main()
             {
                 continue; // ignore CR
             }
+        }
+        if (read_result < 0)
+        {
+            fprintf(stderr, "Serial port disconnected. Reconnecting...\n");
+            sp_close(port);
+            port = establish_port();
         }
     }
 
