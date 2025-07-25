@@ -7,7 +7,7 @@
 #include <libserialport.h>
 
 #define BROKER_URI "192.168.88.251:1883"
-#define CLIENT_ID "baseline_arduino"
+#define CLIENT_ID "baseline_barometer_0"
 #define TOPIC "borus/barometer"
 #define BAUD_RATE 9600
 #define BUF_LEN 32
@@ -146,9 +146,10 @@ int main()
                 int left = JSON_LEN;
                 int w = snprintf(p, left,
                                 "{"
-                                "\"timestamp\":\"%s\","
+                                "\"base_timestamp\":\"%s\","
+                                "\"device_id\":\"%s\","
                                 "\"measurements\":[",
-                                ts);
+                                ts, CLIENT_ID);
                 if (w < 0 || w >= left)
                     continue;
                 p += w;
