@@ -8,7 +8,7 @@
 
 #define BROKER_URI "192.168.88.251:1883"
 #define CLIENT_ID "baseline_arduino"
-#define TOPIC "borus/wearable"
+#define TOPIC "borus/barometer"
 #define BAUD_RATE 9600
 #define BUF_LEN 32
 #define JSON_LEN 256
@@ -94,10 +94,10 @@ int main()
 
         unsigned char byte;
         int read_result;
-        
+
         // check if arduino is unplugged
-        enum sp_return poll_result = sp_poll(port, SP_EVENT_RX_READY, 1000);
-        if (poll_reult != SP_OK)
+        int bytes_waiting = 0;
+        if (sp_input_waiting(port, &bytes_waiting) != SP_OK || bytes_waiting <= 0)
         {
             fprintf(stderr, "Serial port polling failed or Arduino disconnected. Reconnecting...\n");
             sp_close(port);
