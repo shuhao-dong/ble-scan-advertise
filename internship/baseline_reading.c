@@ -96,15 +96,19 @@ int main()
         int read_result;
 
         // check if arduino is unplugged
-        int bytes_waiting = 0;
-        if (sp_input_waiting(port, &bytes_waiting) != SP_OK || bytes_waiting <= 0)
-        {
+        int bytes_waiting = sp_input_waiting(port);
+        if (bytes_waiting < 0)
             fprintf(stderr, "Serial port polling failed or Arduino disconnected. Reconnecting...\n");
             sp_close(port);
             port = establish_port();
             continue;
         }
-        
+        if (bytes_waiting == 0)
+        {
+            usleep(1000); //no data yet
+            continue;
+        }
+
         // check if arduino is disconnected mid-read
         read_result = sp_nonblocking_read(port, &byte, 1);
         if (read_result < 0)
