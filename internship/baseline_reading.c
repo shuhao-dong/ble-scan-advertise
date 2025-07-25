@@ -94,91 +94,88 @@ int main()
 
         unsigned char byte;
         int read_result;
-        while ((read_result = sp_nonblocking_read(port, &byte, 1)) >= 0)
+        
+        // check if arduino is unplugged
+        enum sp_return poll_result = sp_poll(port, SP_EVENT_RX_READY, 1000);
+        if (poll_reult != SP_OK)
         {
-            if (read_result == 0)
-            {
-                usleep(1000);
-                continue;
-            }
-            if (byte == '\n')
-            {
-                line_buf[pos] = '\0';
-                pos = 0;
-
-                printf("Raw serial input: '%s'\n", line_buf);
-                float value = 0;
-                if (sscanf(line_buf, "%f", &value) != 1)
-                {
-                    fprintf(stderr, "Failed to parse value from: '%s'\n", line_buf);
-                    continue;
-                }
-
-                printf("Parsed value: %.2f\n", value);
-
-                // get timestamp
-                time_t now = time(NULL);
-                struct tm tm;
-                gmtime_r(&now, &tm);
-                char ts[32];
-                strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tm);
-
-                // build JSON string
-                char *p = json_buf;
-                int left = JSON_LEN;
-
-                int w = snprintf(p, left,
-                                 "{"
-                                 "\"timestamp\":\"%s\","
-                                 "\"measurements\":[",
-                                 ts);
-                if (w < 0 || w >= left)
-                    continue;
-                p += w;
-                left -= w;
-
-                w = snprintf(p, left,
-                             "{\"property\":\"base_pressure\",\"value\":%.2f,\"unit\":\"hPa\"}",
-                             value);
-                if (w < 0 || w >= left)
-                    continue;
-                p += w;
-                left -= w;
-
-                snprintf(p, left, "]}\n");
-
-                printf("Final JSON payload: %s\n", json_buf);
-
-                // publish message
-                MQTTClient_message msg = MQTTClient_message_initializer;
-                msg.payload = json_buf;
-                msg.payloadlen = strlen(json_buf);
-                msg.qos = 1;
-                MQTTClient_deliveryToken token;
-                if (MQTTClient_publishMessage(client, TOPIC, &msg, &token) != MQTTCLIENT_SUCCESS)
-                {
-                    MQTTClient_disconnect(client, 1000);
-                    mqtt_connect(&client);
-                    MQTTClient_publishMessage(client, TOPIC, &msg, &token);
-                }
-                MQTTClient_waitForCompletion(client, token, 1000);
-
-                break; // break out of byte-reading loop to restart cleanly
-            }
-            else if (byte >= 32 && byte <= 126 && pos < BUF_LEN - 1)
-            {
-                line_buf[pos++] = byte;
-            }
-            else if (byte == '\r')
-            {
-                continue; // ignore CR
-            }
-        }
-        if (read_result < 0)
-        {
-            fprintf(stderr, "Serial port disconnected. Reconnecting...\n");
+            fprintf(stderr, "Serial port polling failed or Arduino disconnected. Reconnecting...\n");
             sp_close(port);
             port = establish_port();
+            continue;
+        }
+        
+        // check if arduino is disconnected mid-read
+        read_result = sp_nonblocking_read(port, &byte, 1);
+        if (read_result < 0)
+        {
+            fprintf(stderr, "Serial read failed. Reconnecting...\n");
+            sp_close(port);
+            port = establish_port();
+            continue;
+        }
+
+        if (byte == '\n')
+        {
+            line_buf[pos] = '\0';
+            pos = 0;
+            printf("Raw serial input: '%s'\n", line_buf);
+            float value = 0;
+            if (sscanf(line_buf, "%f", &value) != 1)
+            {
+                fprintf(stderr, "Failed to parse value from: '%s'\n", line_buf);
+                continue;
+            }
+            printf("Parsed value: %.2f\n", value);
+            // get timestamp
+            time_t now = time(NULL);
+            struct tm tm;
+            gmtime_r(&now, &tm);
+            char ts[32];
+            strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tm);
+            // build JSON string
+            char *p = json_buf;
+            int left = JSON_LEN;
+            int w = snprintf(p, left,
+                             "{"
+                             "\"timestamp\":\"%s\","
+                             "\"measurements\":[",
+                             ts);
+            if (w < 0 || w >= left)
+                continue;
+            p += w;
+            left -= w;
+            w = snprintf(p, left,
+                         "{\"property\":\"base_pressure\",\"value\":%.2f,\"unit\":\"hPa\"}",
+                         value);
+            if (w < 0 || w >= left)
+                continue;
+            p += w;
+            left -= w;
+            snprintf(p, left, "]}\n");
+            printf("Final JSON payload: %s\n", json_buf);
+            // publish message
+            MQTTClient_message msg = MQTTClient_message_initializer;
+            msg.payload = json_buf;
+            msg.payloadlen = strlen(json_buf);
+            msg.qos = 1;
+            MQTTClient_deliveryToken token;
+            if (MQTTClient_publishMessage(client, TOPIC, &msg, &token) != MQTTCLIENT_SUCCESS)
+            {
+                MQTTClient_disconnect(client, 1000);
+                mqtt_connect(&client);
+                MQTTClient_publishMessage(client, TOPIC, &msg, &token);
+            }
+            MQTTClient_waitForCompletion(client, token, 1000);
+            break; // break out of byte-reading loop to restart cleanly
+        }
+        else if (byte >= 32 && byte <= 126 && pos < BUF_LEN - 1)
+        {
+            line_buf[pos++] = byte;
+        }
+        else if (byte == '\r')
+        {
+            continue; // ignore CR
         }
     }
 
