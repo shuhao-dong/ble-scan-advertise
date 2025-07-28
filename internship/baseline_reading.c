@@ -108,7 +108,7 @@ int main()
 
         if (bytes_waiting == 0)
         {
-            usleep(1000); //no data yet
+            usleep(1000); // no data yet
             continue;
         }
 
@@ -145,18 +145,18 @@ int main()
                 char *p = json_buf;
                 int left = JSON_LEN;
                 int w = snprintf(p, left,
-                                "{"
-                                "\"base_timestamp\":\"%s\","
-                                "\"device_id\":\"%s\","
-                                "\"measurements\":[",
-                                ts, CLIENT_ID);
+                                 "{"
+                                 "\"base_timestamp\":\"%s\","
+                                 "\"device_id\":\"%s\","
+                                 "\"measurement_data\":[",
+                                 ts, CLIENT_ID);
                 if (w < 0 || w >= left)
                     continue;
                 p += w;
                 left -= w;
                 w = snprintf(p, left,
-                            "{\"property\":\"base_pressure\",\"value\":%.2f,\"unit\":\"hPa\"}",
-                            value);
+                             "{\"property\":\"base_pressure\",\"value\":%.2f,\"unit\":\"hPa\"}",
+                             value);
                 if (w < 0 || w >= left)
                     continue;
                 p += w;
@@ -176,7 +176,6 @@ int main()
                     MQTTClient_publishMessage(client, TOPIC, &msg, &token);
                 }
                 MQTTClient_waitForCompletion(client, token, 1000);
-
             }
             else if (byte >= 32 && byte <= 126 && pos < BUF_LEN - 1)
             {
