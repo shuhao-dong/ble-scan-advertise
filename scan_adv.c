@@ -35,8 +35,15 @@
 
 /* ───────────────────── 1.  APPLICATION CONFIG ───────────────────────── */
 
-static const char target_mac[] = "EE:54:52:53:00:02"; /* BORUS wearable */
-static const char random_ble_addr[] = "C0:54:52:53:00:00";
+static const char *target_mac[] = {
+    "EE:54:52:53:00:00",
+    "EE:54:52:53:00:01",
+    "EE:54:52:53:00:02",
+    "EE:54:52:53:00:03",
+    "EE:54:52:53:00:04"
+}; /* BORUS wearables */
+static const size_t num_target_macs = sizeof(target_mac) / sizeof(target_mac[0]);
+static const char random_ble_addr[] = "C0:54:52:53:00:01";
 
 #define BROKER_ADDR "192.168.88.251"
 #define BROKER_PORT 1883
@@ -715,7 +722,14 @@ static void process_scan_packet(uint8_t *buf, int len)
         /* only care about our BORUS MAC */
         char addr_str[18];
         ba2str(&addr, addr_str);
-        if (strcmp(addr_str, target_mac))
+        bool match = false;
+        for (size_t i = 0; i < num_target_macs; ++i) {
+            if (strcmp(addr_str, target_mac[i]) == 0) {
+                match = true;
+                break;
+            }
+        }
+        if (!match)
             continue;
 
         /* ---------- (re)start accumulator if new addr/SID ---------- */
@@ -904,8 +918,11 @@ int main(int argc, char *argv[])
         goto exit;
     if (fal_clear(device) < 0)
         goto exit;
-    if (fal_add(device, target_mac, 0x01) < 0)
-        goto exit;
+    for (size_t i = 0; i < num_target_macs; ++i) {
+        if (fal_add(device, target_mac[i], 0x01) < 0) {
+            goto exit;
+        }
+    }
     if (set_ext_scan_params(device) < 0)
         goto exit;
 
