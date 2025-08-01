@@ -155,7 +155,7 @@ int main()
                 p += w;
                 left -= w;
                 w = snprintf(p, left,
-                             "{\"property\":\"base_pressure\",\"value\":%.2f,\"unit\":\"hPa\"}",
+                             "{\"property\":\"base_pressure\",\"value\":%.2f,\"unit\":\"kPa\"}",
                              value);
                 if (w < 0 || w >= left)
                     continue;
