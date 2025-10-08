@@ -550,6 +550,9 @@ static void process_scan_packet(uint8_t *buf, int len)
         uint8_t *payload = &pay_start[1]; // This is nonce | sensor data
         uint16_t plen = pay_len - 1;      // This is the length of nonce | sensor data
 
+        static uint8_t last_ctr[6];
+        static int have_last_ctr = 0;
+
         uint8_t *nonce = payload;
         uint16_t cid = (nonce[0]) | (nonce[1] << 8);
         if (cid != BORUS_COMPANY_ID && ptype == SENSOR_ADV_PAYLOAD_TYPE)
@@ -564,6 +567,25 @@ static void process_scan_packet(uint8_t *buf, int len)
         if (ptype == SENSOR_ADV_PAYLOAD_TYPE &&
             plen == SENSOR_PAYLOAD_DATA_LEN)
         {
+            if (have_last_ctr && memcmp(&nonce[2], last_ctr, 6) == 0)
+            {
+                return; // exact same frame repeated by advertiser, ignore it. 
+            }
+
+            if (have_last_ctr)
+            {
+                uint64_t prev = 0, curr = 0;
+                for (int i = 0; i < 6; ++i){ prev = (prev << 8) | last_ctr[i]; }
+                for (int i = 0; i < 6; ++i){ curr = (curr << 8) | nonce[2+i]; }
+                if (curr != prev + 1){
+                    printf("  WARNING: missed %llu frames (nonce gap %llu -> %llu)\n",
+                    (unsigned long long)(curr - prev - 1),
+                    (unsigned long long)prev, (unsigned long long)curr); 
+                }
+            }
+
+            memcpy(last_ctr, &nonce[2], 6);
+            have_last_ctr = 1; 
 
             uint8_t plain[SENSOR_DATA_PACKET_SIZE];
             if (decrypt_sensor_block_ap(aes_key, payload,
@@ -756,7 +778,7 @@ int main(int argc, char *argv[])
 
         if (!scanning && !advertising)
         {
-            if (set_ext_scan_enable(device, true, false) == 0)
+            if (set_ext_scan_enable(device, true, true) == 0)
                 scanning = true;
             else
             {
