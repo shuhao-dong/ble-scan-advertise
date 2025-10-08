@@ -1,5 +1,0 @@
-# pack-refs with: peeled fully-peeled sorted 
-f6ff7194985948687e06e36913d586423238c4f7 refs/heads/feature/decrypt-custom-MAC
-d12ef61c5afdb5040f88b0851be07a2997d3156d refs/heads/feature/ext-scan-sync
-328b4d7a51e77b47a154bf5c57a13fbcee76c152 refs/heads/integration/mqtt-publisher
-bb99f8df6ffefeb11e1b0a06df332afbae28e8ff refs/heads/master
