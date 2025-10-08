@@ -3,13 +3,12 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
-// #include <cjson/cJSON.h>
 #include <MQTTClient.h>
 #include <libserialport.h>
 
 #define BROKER_URI "192.168.88.251:1883"
-#define CLIENT_ID "baseline_arduino"
-#define TOPIC "borus/wearable"
+#define CLIENT_ID "baseline_barometer_0"
+#define TOPIC "borus/barometer"
 #define BAUD_RATE 9600
 #define BUF_LEN 32
 #define JSON_LEN 256
@@ -94,13 +93,40 @@ int main()
         static int pos = 0;
 
         unsigned char byte;
-        while (sp_nonblocking_read(port, &byte, 1) == 1)
+        int read_result;
+
+        // check if arduino is unplugged
+        int bytes_waiting = sp_input_waiting(port);
+
+        if (bytes_waiting < 0)
         {
+            fprintf(stderr, "Serial port polling failed or Arduino disconnected. Reconnecting...\n");
+            sp_close(port);
+            port = establish_port();
+            continue;
+        }
+
+        if (bytes_waiting == 0)
+        {
+            usleep(1000); // no data yet
+            continue;
+        }
+
+        // check if arduino is disconnected mid-read
+        while ((read_result = sp_nonblocking_read(port, &byte, 1)) == 1)
+        {
+            if (read_result < 0)
+            {
+                fprintf(stderr, "Serial read failed. Reconnecting...\n");
+                sp_close(port);
+                port = establish_port();
+                continue;
+            }
+
             if (byte == '\n')
             {
                 line_buf[pos] = '\0';
                 pos = 0;
-
                 printf("Raw serial input: '%s'\n", line_buf);
                 float value = 0;
                 if (sscanf(line_buf, "%f", &value) != 1)
@@ -108,42 +134,35 @@ int main()
                     fprintf(stderr, "Failed to parse value from: '%s'\n", line_buf);
                     continue;
                 }
-
                 printf("Parsed value: %.2f\n", value);
-
                 // get timestamp
                 time_t now = time(NULL);
                 struct tm tm;
                 gmtime_r(&now, &tm);
                 char ts[32];
                 strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tm);
-
                 // build JSON string
                 char *p = json_buf;
                 int left = JSON_LEN;
-
                 int w = snprintf(p, left,
                                  "{"
-                                 "\"timestamp\":\"%s\","
-                                 "\"measurements\":[",
-                                 ts);
+                                 "\"base_timestamp\":\"%s\","
+                                 "\"device_id\":\"%s\","
+                                 "\"measurement_data\":[",
+                                 ts, CLIENT_ID);
                 if (w < 0 || w >= left)
                     continue;
                 p += w;
                 left -= w;
-
                 w = snprintf(p, left,
-                             "{\"property\":\"base_pressure\",\"value\":%.2f,\"unit\":\"hPa\"}",
+                             "{\"property\":\"base_pressure\",\"value\":%.2f,\"unit\":\"kPa\"}",
                              value);
                 if (w < 0 || w >= left)
                     continue;
                 p += w;
                 left -= w;
-
                 snprintf(p, left, "]}\n");
-
                 printf("Final JSON payload: %s\n", json_buf);
-
                 // publish message
                 MQTTClient_message msg = MQTTClient_message_initializer;
                 msg.payload = json_buf;
@@ -157,8 +176,6 @@ int main()
                     MQTTClient_publishMessage(client, TOPIC, &msg, &token);
                 }
                 MQTTClient_waitForCompletion(client, token, 1000);
-
-                break; // break out of byte-reading loop to restart cleanly
             }
             else if (byte >= 32 && byte <= 126 && pos < BUF_LEN - 1)
             {

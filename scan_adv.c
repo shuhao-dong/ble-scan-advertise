@@ -35,8 +35,15 @@
 
 /* ───────────────────── 1.  APPLICATION CONFIG ───────────────────────── */
 
-static const char target_mac[] = "EE:54:52:53:00:01"; /* BORUS wearable */
-static const char random_ble_addr[] = "C0:54:52:53:00:00";
+static const char *target_mac[] = {
+    "EE:54:52:53:00:00",
+    "EE:54:52:53:00:01",
+    "EE:54:52:53:00:02",
+    "EE:54:52:53:00:03",
+    "EE:54:52:53:00:04"
+}; /* BORUS wearables */
+static const size_t num_target_macs = sizeof(target_mac) / sizeof(target_mac[0]);
+static const char random_ble_addr[] = "C0:54:52:53:00:01";
 
 #define BROKER_ADDR "192.168.88.251"
 #define BROKER_PORT 1883
@@ -321,7 +328,7 @@ typedef struct
  * @param s          Pointer to an array of imu_payload_t samples
  *
  */
-static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
+static void emit_json_full(const char *gateway_id, char *wearable_id, int8_t rssi, int tempC, float press_hPa,
                            int batt_mV, int soc_deg, uint8_t npm_err,
                            uint8_t n, const imu_payload_t *s)
 {
@@ -353,48 +360,63 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     char iso[32];
     strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%SZ", &tm_utc);
 
-    APPEND("{");
+    int w = snprintf(p, left,
+         "{"
+             "\"base_timestamp\":\"%s\","
+             "\"wearable_id\":\"%s\","
+             "\"gateway_id\":\"%s\","
+             "\"measurement_data\":{",
+             timestamp, wearable_id, gateway_id);
+    p += w;
+    left -= w;
 
-    APPEND("\"base_timestamp\":\"%s\",", iso);
-    APPEND("\"wearable_id\":\"%s\",", target_mac);
-    APPEND("\"gateway_id\":\"%s\",",  random_ble_addr);
+    w = snprintf(p, left,
+                 "\"state\":["
+                    "{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},"
+                    "{\"property\":\"pressure\",\"value\":%.2f,\"unit\":\"hPa\"},"
+                    "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"}"
+                 "],"
+                 "\"IMU_batch\":[",
+                 tempC, press_hPa, rssi);
+    p += w;
+    left -= w;
 
-    /* measurement_data.state: no trailing comma inside the array */
-    APPEND("\"measurement_data\":{");
-      APPEND("\"state\":[");
-        APPEND("{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},", rssi);
-        APPEND("{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},", tempC);
-        APPEND("{\"property\":\"pressure\",\"value\":%.1f,\"unit\":\"hPa\"}",  press_hPa);
-      APPEND("],");
+    for (uint8_t i = 0; i < n && left > 0; i++)
+    {
+        const imu_payload_t *sp = &s[i];
+        w = snprintf(p, left,
+                     "%s{"
+                         "\"acc\":[%.2f,%.2f,%.2f],"
+                         "\"acc_unit\":\"m/s^2\","
+                         "\"gyro\":[%.2f,%.2f,%.2f],"
+                         "\"gyro_unit\":\"rad/s\","
+                         "\"ts\":%u"
+                     "}",
+                     (i > 0) ? "," : "",
+                     sp->v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f, 
+                     sp->v[3] / 100.0f, sp->v[4] / 100.0f, sp->v[5] / 100.0f,
+                     sp->ts);
+        p += w;
+        left -= w;
+    }
 
-      /* IMU batch */
-      APPEND("\"IMU_batch\":[");
-      for (uint8_t i = 0; i < n; i++) {
-          const imu_payload_t *sp = &s[i];
-          const char *sep = (i == 0) ? "" : ",";
-          APPEND("%s{"
-                     "\"acceleration\":[%.2f,%.2f,%.2f],"
-                     "\"acceleration_unit\":\"m/s^2\","
-                     "\"gyroscope\":[%.2f,%.2f,%.2f],"
-                     "\"gyroscope_unit\":\"rad/s\","
-                     "\"timestamp\":%u"
-                 "}",
-                 sep,
-                 sp->v[0]/100.0f, sp->v[1]/100.0f, sp->v[2]/100.0f,
-                 sp->v[3]/100.0f, sp->v[4]/100.0f, sp->v[5]/100.0f,
-                 sp->ts);
-      }
-      APPEND("]"); /* end IMU_batch */
-    APPEND("},");  /* end measurement_data */
+    w = snprintf(p, left,
+                 "]"
+             "},"
+             "\"monitoring\":[");
+    p += w;
+    left -= w;
 
-    /* monitoring array (no trailing comma) */
-    APPEND("\"monitoring\":[");
-      APPEND("{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},", batt_mV);
-      APPEND("{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},", soc_deg);
-      APPEND("{\"property\":\"npm_err\",\"value\":%u}", (unsigned)npm_err);
-    APPEND("]");
+    w = snprintf(p, left,
+                 "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
+                 "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},"
+                 "{\"property\":\"npm_status\",\"value\":%d}",
+                 batt_mV, soc_deg, npm_err);
 
-    APPEND("}\n");
+    p += w;
+    left -= w;
+
+    snprintf(p, left, "]}\n");
 
     fputs(buf, stdout);
     fflush(stdout);
@@ -723,7 +745,14 @@ static void process_scan_packet(uint8_t *buf, int len)
         /* only care about our BORUS MAC */
         char addr_str[18];
         ba2str(&addr, addr_str);
-        if (strcmp(addr_str, target_mac))
+        bool match = false;
+        for (size_t i = 0; i < num_target_macs; ++i) {
+            if (strcmp(addr_str, target_mac[i]) == 0) {
+                match = true;
+                break;
+            }
+        }
+        if (!match)
             continue;
 
         /* ---------- (re)start accumulator if new addr/SID ---------- */
@@ -821,7 +850,7 @@ static void process_scan_packet(uint8_t *buf, int len)
                     off += 4;
                 }
 
-                emit_json_full(rssi, tempC, press, batt, soc_temp, npm_err,
+                emit_json_full(random_ble_addr, addr_str, rssi, tempC, press, batt, soc_temp, npm_err,
                                number_of_batch, samples );
             }
             else
@@ -912,8 +941,11 @@ int main(int argc, char *argv[])
         goto exit;
     if (fal_clear(device) < 0)
         goto exit;
-    if (fal_add(device, target_mac, 0x01) < 0)
-        goto exit;
+    for (size_t i = 0; i < num_target_macs; ++i) {
+        if (fal_add(device, target_mac[i], 0x01) < 0) {
+            goto exit;
+        }
+    }
     if (set_ext_scan_params(device) < 0)
         goto exit;
 
