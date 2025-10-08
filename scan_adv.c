@@ -329,84 +329,82 @@ static void emit_json_full(int8_t rssi, int tempC, float press_hPa,
     char *p = buf;
     int left = JSON_BUF;
 
+    #define APPEND(fmt, ...)                                                      \
+        do {                                                                      \
+            if (left > 1) {                                                       \
+                int _w = snprintf(p, (size_t)left, fmt, ##__VA_ARGS__);           \
+                if (_w < 0) { _w = 0; }                                           \
+                if (_w >= left) {                                                 \
+                    /* truncate and null-terminate */                             \
+                    p += left - 1;                                                \
+                    left = 1;                                                     \
+                    *p = '\0';                                                    \
+                } else {                                                          \
+                    p += _w;                                                      \
+                    left -= _w;                                                   \
+                }                                                                 \
+            }                                                                     \
+        } while (0)
+
+    /* RFC3339-like UTC stamp ending with 'Z' */
     time_t now = time(NULL);
-    struct tm *tm = localtime(&now);
-    char timestamp[32];
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", tm);
+    struct tm tm_utc;
+    gmtime_r(&now, &tm_utc);
+    char iso[32];
+    strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%SZ", &tm_utc);
 
-    int w = snprintf(p, left,
-         "{"
-             "\"base_timestamp\":\"%s\",",
-             timestamp);
-             
-    p += w;
-    left -= w;
+    APPEND("{");
 
-    w = snprintf(p, left,
-             "\"wearable_id\":\"%s\",",
-             target_mac);
-             
-    p += w;
-    left -= w;
+    APPEND("\"base_timestamp\":\"%s\",", iso);
+    APPEND("\"wearable_id\":\"%s\",", target_mac);
+    APPEND("\"gateway_id\":\"%s\",",  random_ble_addr);
 
-    w = snprintf(p, left,
-             "\"gateway_id\":\"%s\",",
-             random_ble_addr);
-             
-    p += w;
-    left -= w;
+    /* measurement_data.state: no trailing comma inside the array */
+    APPEND("\"measurement_data\":{");
+      APPEND("\"state\":[");
+        APPEND("{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},", rssi);
+        APPEND("{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},", tempC);
+        APPEND("{\"property\":\"pressure\",\"value\":%.1f,\"unit\":\"hPa\"}",  press_hPa);
+      APPEND("],");
 
-    w = snprintf(p, left,
-             "\"measurement_data\":{"
-                 "\"state\":["
-                     "{\"property\":\"rssi\",\"value\":%d,\"unit\":\"dBm\"},"
-                     "{\"property\":\"temperature\",\"value\":%d,\"unit\":\"degC\"},"
-                     "{\"property\":\"pressure\",\"value\":%.1f,\"unit\":\"hPa\"},"
-                     "],"
-                 "\"IMU_batch\":[",
-             rssi, tempC, press_hPa);
-    p += w;
-    left -= w;
+      /* IMU batch */
+      APPEND("\"IMU_batch\":[");
+      for (uint8_t i = 0; i < n; i++) {
+          const imu_payload_t *sp = &s[i];
+          const char *sep = (i == 0) ? "" : ",";
+          APPEND("%s{"
+                     "\"acceleration\":[%.2f,%.2f,%.2f],"
+                     "\"acceleration_unit\":\"m/s^2\","
+                     "\"gyroscope\":[%.2f,%.2f,%.2f],"
+                     "\"gyroscope_unit\":\"rad/s\","
+                     "\"timestamp\":%u"
+                 "}",
+                 sep,
+                 sp->v[0]/100.0f, sp->v[1]/100.0f, sp->v[2]/100.0f,
+                 sp->v[3]/100.0f, sp->v[4]/100.0f, sp->v[5]/100.0f,
+                 sp->ts);
+      }
+      APPEND("]"); /* end IMU_batch */
+    APPEND("},");  /* end measurement_data */
 
-    for (uint8_t i = 0; i < n && left > 0; i++)
-    {
-        const imu_payload_t *sp = &s[i];
-        w = snprintf(p, left,
-                     "%s{"
-                         "\"acceleration\":[%.2f,%.2f,%.2f],"
-                         "\"acceleration_unit\":\"m/s^2\","
-                         "\"gyroscope\":[%.2f,%.2f,%.2f],"
-                         "\"gyroscope_unit\":\"rad/s\","
-                         "\"timestamp\":%u}",
-                     sp->v[0] / 100.0f, sp->v[1] / 100.0f, sp->v[2] / 100.0f,
-                     sp->v[3] / 100.0f, sp->v[4] / 100.0f, sp->v[5] / 100.0f, sp->ts);
-        p += w;
-        left -= w;
-    }
+    /* monitoring array (no trailing comma) */
+    APPEND("\"monitoring\":[");
+      APPEND("{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},", batt_mV);
+      APPEND("{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"},", soc_deg);
+      APPEND("{\"property\":\"npm_err\",\"value\":%u}", (unsigned)npm_err);
+    APPEND("]");
 
-    w = snprintf(p, left,
-                     "]},\"monitoring\":[");
-    p += w;
-    left -= w;
-
-    w = snprintf(p, left,
-                         "{\"property\":\"battery_voltage\",\"value\":%d,\"unit\":\"mV\"},"
-                         "{\"property\":\"soc_temperature\",\"value\":%d,\"unit\":\"degC\"}"
-                     "]",
-             batt_mV, soc_deg);
-
-    p += w;
-    left -= w;
-    
-    
-
-    snprintf(p, left, "}\n");
+    APPEND("}\n");
 
     fputs(buf, stdout);
     fflush(stdout);
-
     mqtt_publish_json(buf);
+
+    #undef APPEND
 }
+
+
+
 
 /* ─────────── 6.  EXT-ADVERTISER HELPERS ────────────────────────────── */
 
