@@ -336,29 +336,10 @@ static void emit_json_full(const char *gateway_id, char *wearable_id, int8_t rss
     char *p = buf;
     int left = JSON_BUF;
 
-    #define APPEND(fmt, ...)                                                      \
-        do {                                                                      \
-            if (left > 1) {                                                       \
-                int _w = snprintf(p, (size_t)left, fmt, ##__VA_ARGS__);           \
-                if (_w < 0) { _w = 0; }                                           \
-                if (_w >= left) {                                                 \
-                    /* truncate and null-terminate */                             \
-                    p += left - 1;                                                \
-                    left = 1;                                                     \
-                    *p = '\0';                                                    \
-                } else {                                                          \
-                    p += _w;                                                      \
-                    left -= _w;                                                   \
-                }                                                                 \
-            }                                                                     \
-        } while (0)
-
-    /* RFC3339-like UTC stamp ending with 'Z' */
     time_t now = time(NULL);
-    struct tm tm_utc;
-    gmtime_r(&now, &tm_utc);
-    char iso[32];
-    strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%SZ", &tm_utc);
+    struct tm *tm = localtime(&now);
+    char timestamp[32];
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", tm);
 
     int w = snprintf(p, left,
          "{"
@@ -420,13 +401,9 @@ static void emit_json_full(const char *gateway_id, char *wearable_id, int8_t rss
 
     fputs(buf, stdout);
     fflush(stdout);
+
     mqtt_publish_json(buf);
-
-    #undef APPEND
 }
-
-
-
 
 /* ─────────── 6.  EXT-ADVERTISER HELPERS ────────────────────────────── */
 
@@ -788,6 +765,10 @@ static void process_scan_packet(uint8_t *buf, int len)
         uint8_t *payload = &pay_start[1]; // This is nonce | sensor data
         uint16_t plen = pay_len - 1;      // This is the length of nonce | sensor data
 
+        /* Keep last-seen 48-bit nonce counter and detect duplicates/losses */
+        static uint8_t last_ctr[6];
+        static int have_last_ctr = 0;
+
         uint8_t *nonce = payload;
         uint16_t cid = (nonce[0]) | (nonce[1] << 8);
         if (cid != BORUS_COMPANY_ID && ptype == SENSOR_ADV_PAYLOAD_TYPE)
@@ -802,6 +783,26 @@ static void process_scan_packet(uint8_t *buf, int len)
         if (ptype == SENSOR_ADV_PAYLOAD_TYPE &&
             plen == SENSOR_PAYLOAD_DATA_LEN)
         {
+            /* Duplicate check first */
+            if (have_last_ctr && memcmp(&nonce[2], last_ctr, 6) == 0)
+            {
+                return;
+            }
+
+            /* loss detection */
+            if (have_last_ctr)
+            {
+                uint64_t prev = 0, curr = 0;
+                for (int i = 0; i < 6; ++i){ prev = (prev << 8) | last_ctr[i]; }
+                for (int i = 0; i < 6; ++i){ curr = (curr << 8) | nonce[2+i]; }
+                if (curr != prev + 1)
+                {
+                    
+                }
+            }
+
+            memcpy(last_ctr, &nonce[2], 6);
+            have_last_ctr = 1;
 
             uint8_t plain[SENSOR_DATA_PACKET_SIZE];
             if (decrypt_sensor_block_ap(aes_key, payload,
@@ -982,7 +983,7 @@ int main(int argc, char *argv[])
 
         if (!scanning && !advertising)
         {
-            if (set_ext_scan_enable(device, true, false) == 0)
+            if (set_ext_scan_enable(device, true, true) == 0)
                 scanning = true;
             else
             {
